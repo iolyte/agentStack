@@ -1,0 +1,251 @@
+#!/usr/bin/env bash
+# ╔═══════════════════════════════════════════════════╗
+# ║           clawstack — CLI                         ║
+# ║   OpenClaw + Mission Control Docker Stack         ║
+# ║   github.com/iolyte/clawstack                     ║
+# ╚═══════════════════════════════════════════════════╝
+
+set -euo pipefail
+
+# ── Colors ────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+RESET='\033[0m'
+
+# ── Config ────────────────────────────────────────────
+CLAWSTACK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+COMPOSE="docker compose -f $CLAWSTACK_DIR/docker-compose.yml"
+VERSION="1.0.0"
+
+# ── Helpers ───────────────────────────────────────────
+log()     { echo -e "${CYAN}🦞${RESET} $*"; }
+success() { echo -e "${GREEN}✓${RESET} $*"; }
+warn()    { echo -e "${YELLOW}⚠${RESET}  $*"; }
+error()   { echo -e "${RED}✗${RESET}  $*" >&2; }
+bold()    { echo -e "${BOLD}$*${RESET}"; }
+dim()     { echo -e "${DIM}$*${RESET}"; }
+
+banner() {
+  echo ""
+  echo -e "${CYAN}${BOLD}"
+  echo "   ██████╗██╗      █████╗ ██╗    ██╗███████╗████████╗ █████╗  ██████╗██╗  ██╗"
+  echo "  ██╔════╝██║     ██╔══██╗██║    ██║██╔════╝╚══██╔══╝██╔══██╗██╔════╝██║ ██╔╝"
+  echo "  ██║     ██║     ███████║██║ █╗ ██║███████╗   ██║   ███████║██║     █████╔╝ "
+  echo "  ██║     ██║     ██╔══██║██║███╗██║╚════██║   ██║   ██╔══██║██║     ██╔═██╗ "
+  echo "  ╚██████╗███████╗██║  ██║╚███╔███╔╝███████║   ██║   ██║  ██║╚██████╗██║  ██╗"
+  echo "   ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚══════╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝"
+  echo -e "${RESET}"
+  dim "  OpenClaw + Mission Control Docker Stack — v$VERSION by iolyte"
+  echo ""
+}
+
+check_deps() {
+  local missing=()
+  command -v docker &>/dev/null || missing+=("docker")
+  command -v docker compose &>/dev/null 2>&1 || missing+=("docker compose")
+
+  if [ ${#missing[@]} -gt 0 ]; then
+    error "Missing dependencies: ${missing[*]}"
+    echo "  Install Docker Desktop: https://docs.docker.com/desktop/mac/"
+    exit 1
+  fi
+}
+
+check_env() {
+  if [ ! -f "$CLAWSTACK_DIR/.env" ]; then
+    warn ".env file not found. Run ${BOLD}clawstack install${RESET} first."
+    exit 1
+  fi
+}
+
+# ── Commands ──────────────────────────────────────────
+
+cmd_install() {
+  banner
+  bold "Installing clawstack..."
+  echo ""
+
+  check_deps
+
+  # Copy .env if missing
+  if [ ! -f "$CLAWSTACK_DIR/.env" ]; then
+    cp "$CLAWSTACK_DIR/.env.example" "$CLAWSTACK_DIR/.env"
+    success "Created .env from .env.example"
+    warn "Edit ${BOLD}$CLAWSTACK_DIR/.env${RESET} with your API keys before starting."
+  else
+    dim "  .env already exists, skipping."
+  fi
+
+  # Add clawstack to PATH via shell profile
+  SHELL_PROFILE=""
+  if [ -f "$HOME/.zshrc" ]; then
+    SHELL_PROFILE="$HOME/.zshrc"
+  elif [ -f "$HOME/.bashrc" ]; then
+    SHELL_PROFILE="$HOME/.bashrc"
+  elif [ -f "$HOME/.bash_profile" ]; then
+    SHELL_PROFILE="$HOME/.bash_profile"
+  fi
+
+  INSTALL_LINE="export PATH=\"$CLAWSTACK_DIR/scripts:\$PATH\""
+
+  if [ -n "$SHELL_PROFILE" ]; then
+    if ! grep -q "clawstack" "$SHELL_PROFILE" 2>/dev/null; then
+      echo "" >> "$SHELL_PROFILE"
+      echo "# clawstack" >> "$SHELL_PROFILE"
+      echo "$INSTALL_LINE" >> "$SHELL_PROFILE"
+      success "Added clawstack to PATH in $SHELL_PROFILE"
+      warn "Run ${BOLD}source $SHELL_PROFILE${RESET} or restart your terminal."
+    else
+      dim "  clawstack already in PATH."
+    fi
+  fi
+
+  echo ""
+  success "clawstack installed!"
+  echo ""
+  dim "  Next steps:"
+  echo "  1. Edit ${BOLD}.env${RESET} with your OPENROUTER_API_KEY and OPENCLAW_GATEWAY_TOKEN"
+  echo "  2. Run ${BOLD}clawstack start${RESET}"
+  echo "  3. Open ${BOLD}http://localhost${RESET} for Mission Control"
+  echo ""
+}
+
+cmd_start() {
+  check_deps
+  check_env
+  log "Starting clawstack..."
+  $COMPOSE up -d --build
+  echo ""
+  success "clawstack is running!"
+  echo ""
+  echo "  🖥️  Mission Control  →  ${BOLD}http://localhost${RESET}"
+  echo "  🦞  OpenClaw         →  ${BOLD}http://localhost:18789${RESET}"
+  echo "  🗃️  Qdrant UI        →  ${BOLD}http://localhost:6333/dashboard${RESET}"
+  echo ""
+}
+
+cmd_stop() {
+  check_deps
+  log "Stopping clawstack..."
+  $COMPOSE down
+  success "clawstack stopped."
+}
+
+cmd_restart() {
+  cmd_stop
+  echo ""
+  cmd_start
+}
+
+cmd_status() {
+  check_deps
+  bold "clawstack status:"
+  echo ""
+  $COMPOSE ps
+  echo ""
+
+  # Gateway health check
+  if curl -sf http://localhost:18789/health &>/dev/null; then
+    success "OpenClaw gateway: ${GREEN}healthy${RESET}"
+  else
+    warn "OpenClaw gateway: not reachable"
+  fi
+
+  # Mission Control health
+  if curl -sf http://localhost:4000 &>/dev/null; then
+    success "Mission Control:  ${GREEN}healthy${RESET}"
+  else
+    warn "Mission Control:  not reachable"
+  fi
+  echo ""
+}
+
+cmd_logs() {
+  check_deps
+  local service="${1:-}"
+  if [ -n "$service" ]; then
+    $COMPOSE logs -f "$service"
+  else
+    $COMPOSE logs -f
+  fi
+}
+
+cmd_update() {
+  check_deps
+  log "Pulling latest images..."
+  $COMPOSE pull
+  success "Images updated. Run ${BOLD}clawstack restart${RESET} to apply."
+}
+
+cmd_reset() {
+  check_deps
+  warn "This will ${RED}delete all volumes${RESET} (database, qdrant, openclaw config)."
+  echo -n "  Are you sure? [y/N] "
+  read -r confirm
+  if [[ "$confirm" =~ ^[Yy]$ ]]; then
+    log "Resetting clawstack..."
+    $COMPOSE down -v
+    success "Reset complete. Run ${BOLD}clawstack start${RESET} to start fresh."
+  else
+    dim "  Cancelled."
+  fi
+}
+
+cmd_shell() {
+  local service="${1:-openclaw}"
+  log "Opening shell in ${BOLD}$service${RESET}..."
+  $COMPOSE exec "$service" sh
+}
+
+cmd_help() {
+  banner
+  bold "Usage:"
+  echo "  clawstack <command> [options]"
+  echo ""
+  bold "Commands:"
+  echo "  ${BOLD}install${RESET}          Set up clawstack and add to PATH"
+  echo "  ${BOLD}start${RESET}            Start all containers"
+  echo "  ${BOLD}stop${RESET}             Stop all containers"
+  echo "  ${BOLD}restart${RESET}          Restart all containers"
+  echo "  ${BOLD}status${RESET}           Show container status and health"
+  echo "  ${BOLD}logs [service]${RESET}   Tail logs (all or specific service)"
+  echo "  ${BOLD}update${RESET}           Pull latest Docker images"
+  echo "  ${BOLD}reset${RESET}            Wipe all volumes and start fresh"
+  echo "  ${BOLD}shell [service]${RESET}  Open a shell in a container"
+  echo "  ${BOLD}help${RESET}             Show this help"
+  echo ""
+  bold "Services:"
+  dim "  openclaw, mission-control, postgres, redis, qdrant, nginx"
+  echo ""
+  bold "Examples:"
+  echo "  clawstack start"
+  echo "  clawstack logs openclaw"
+  echo "  clawstack shell postgres"
+  echo ""
+}
+
+# ── Router ────────────────────────────────────────────
+COMMAND="${1:-help}"
+shift || true
+
+case "$COMMAND" in
+  install)   cmd_install ;;
+  start)     cmd_start ;;
+  stop)      cmd_stop ;;
+  restart)   cmd_restart ;;
+  status)    cmd_status ;;
+  logs)      cmd_logs "$@" ;;
+  update)    cmd_update ;;
+  reset)     cmd_reset ;;
+  shell)     cmd_shell "$@" ;;
+  help|--help|-h) cmd_help ;;
+  *)
+    error "Unknown command: $COMMAND"
+    echo "  Run ${BOLD}clawstack help${RESET} for usage."
+    exit 1
+    ;;
+esac
