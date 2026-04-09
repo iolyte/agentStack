@@ -7,3 +7,7 @@ node_modules/
 dist/
 mission-control/.next/
 mission-control/node_modules/
+mission-control/data/
+mission-control/*.db
+mission-control/tsconfig.tsbuildinfo
+.data/
