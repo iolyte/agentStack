@@ -1,0 +1,497 @@
+#!/usr/bin/env bash
+# ╔═══════════════════════════════════════════════════╗
+# ║           clawstack — CLI                         ║
+# ║   OpenClaw + Mission Control Docker Stack         ║
+# ║   github.com/iolyte/clawstack                     ║
+# ╚═══════════════════════════════════════════════════╝
+
+set -euo pipefail
+
+# ── Colors ────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+DIM='\033[2m'
+RESET='\033[0m'
+
+# ── Config ────────────────────────────────────────────
+CLAWSTACK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+COMPOSE=(docker compose -f "$CLAWSTACK_DIR/docker-compose.yml")
+VERSION="1.0.0"
+DATA_ROOT="$CLAWSTACK_DIR/.data"
+
+# ── Helpers ───────────────────────────────────────────
+say()     { printf '%b\n' "$*"; }
+log()     { echo -e "${CYAN}🦞${RESET} $*"; }
+success() { echo -e "${GREEN}✓${RESET} $*"; }
+warn()    { echo -e "${YELLOW}⚠${RESET}  $*"; }
+error()   { echo -e "${RED}✗${RESET}  $*" >&2; }
+bold()    { echo -e "${BOLD}$*${RESET}"; }
+dim()     { echo -e "${DIM}$*${RESET}"; }
+
+banner() {
+  echo ""
+  echo -e "${CYAN}${BOLD}"
+  echo "   ██████╗██╗      █████╗ ██╗    ██╗███████╗████████╗ █████╗  ██████╗██╗  ██╗"
+  echo "  ██╔════╝██║     ██╔══██╗██║    ██║██╔════╝╚══██╔══╝██╔══██╗██╔════╝██║ ██╔╝"
+  echo "  ██║     ██║     ███████║██║ █╗ ██║███████╗   ██║   ███████║██║     █████╔╝ "
+  echo "  ██║     ██║     ██╔══██║██║███╗██║╚════██║   ██║   ██╔══██║██║     ██╔═██╗ "
+  echo "  ╚██████╗███████╗██║  ██║╚███╔███╔╝███████║   ██║   ██║  ██║╚██████╗██║  ██╗"
+  echo "   ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚══════╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝"
+  echo -e "${RESET}"
+  dim "  OpenClaw + Mission Control Docker Stack — v$VERSION by iolyte"
+  echo ""
+}
+
+check_deps() {
+  local missing=()
+  command -v docker &>/dev/null || missing+=("docker")
+  docker compose version &>/dev/null || missing+=("docker compose")
+
+  if [ ${#missing[@]} -gt 0 ]; then
+    error "Missing dependencies: ${missing[*]}"
+    echo "  Install Docker Desktop: https://docs.docker.com/desktop/mac/"
+    exit 1
+  fi
+}
+
+check_env() {
+  if [ ! -f "$CLAWSTACK_DIR/.env" ]; then
+    warn ".env file not found. Run ${BOLD}clawstack install${RESET} first."
+    exit 1
+  fi
+}
+
+generate_secret() {
+  if command -v openssl &>/dev/null; then
+    openssl rand -hex 24
+    return
+  fi
+
+  local generated
+  generated="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 32 || true)"
+  printf '%s\n' "$generated"
+}
+
+get_env_value() {
+  local key="$1"
+  local value
+  value="$(grep -E "^${key}=" "$CLAWSTACK_DIR/.env" 2>/dev/null | tail -n 1 | cut -d= -f2- || true)"
+  printf '%s' "$value"
+}
+
+append_env_if_missing() {
+  local key="$1"
+  local value="$2"
+
+  if [ -n "$(get_env_value "$key")" ]; then
+    return
+  fi
+
+  echo "${key}=${value}" >> "$CLAWSTACK_DIR/.env"
+}
+
+ensure_mission_control_auth() {
+  local password
+  local secret
+
+  password="$(get_env_value "MC_ADMIN_PASSWORD")"
+  if [ -z "$password" ]; then
+    password="claw-$(generate_secret | cut -c1-18)"
+    append_env_if_missing "MC_ADMIN_PASSWORD" "$password"
+    success "Generated Mission Control password"
+  fi
+
+  secret="$(get_env_value "MC_SESSION_SECRET")"
+  if [ -z "$secret" ]; then
+    append_env_if_missing "MC_SESSION_SECRET" "$(generate_secret)"
+    success "Generated Mission Control session secret"
+  fi
+}
+
+ensure_openclaw_gateway_auth() {
+  local password
+
+  password="$(get_env_value "OPENCLAW_GATEWAY_PASSWORD")"
+  if [ -z "$password" ]; then
+    password="gateway-$(generate_secret | cut -c1-24)"
+    append_env_if_missing "OPENCLAW_GATEWAY_PASSWORD" "$password"
+    success "Generated OpenClaw gateway password"
+  fi
+}
+
+show_mission_control_password() {
+  local password
+  password="$(get_env_value "MC_ADMIN_PASSWORD")"
+
+  if [ -n "$password" ]; then
+    say "  🔐 Mission Control password → ${BOLD}${password}${RESET}"
+  fi
+}
+
+show_openclaw_gateway_password() {
+  local password
+  password="$(get_env_value "OPENCLAW_GATEWAY_PASSWORD")"
+
+  if [ -n "$password" ]; then
+    say "  🔗 OpenClaw gateway password → ${BOLD}${password}${RESET}"
+  fi
+}
+
+wait_for_http() {
+  local url="$1"
+  local label="$2"
+  local max_attempts="${3:-40}"
+  local attempt=1
+
+  while [ "$attempt" -le "$max_attempts" ]; do
+    if curl -sf "$url" &>/dev/null; then
+      return 0
+    fi
+
+    sleep 2
+    attempt=$((attempt + 1))
+  done
+
+  warn "$label did not become ready in time."
+  return 1
+}
+
+ensure_data_dirs() {
+  mkdir -p \
+    "$DATA_ROOT/openclaw/config" \
+    "$DATA_ROOT/openclaw/workspace" \
+    "$DATA_ROOT/postgres" \
+    "$DATA_ROOT/redis" \
+    "$DATA_ROOT/qdrant"
+
+  chmod 0777 \
+    "$DATA_ROOT" \
+    "$DATA_ROOT/openclaw" \
+    "$DATA_ROOT/openclaw/config" \
+    "$DATA_ROOT/openclaw/workspace" \
+    "$DATA_ROOT/postgres" \
+    "$DATA_ROOT/redis" \
+    "$DATA_ROOT/qdrant"
+}
+
+agent_exists() {
+  local agent_id="$1"
+  "${COMPOSE[@]}" exec -T openclaw sh -lc "openclaw agents list --json 2>/dev/null | grep -q '\"id\"[[:space:]]*:[[:space:]]*\"${agent_id}\"'" 2>/dev/null
+}
+
+ensure_agent() {
+  local agent_id="$1"
+  local workspace="$2"
+  local display_name="$3"
+  local theme="$4"
+
+  if agent_exists "$agent_id"; then
+    dim "  agent ${agent_id} already exists"
+    return
+  fi
+
+  log "Bootstrapping agent ${BOLD}${agent_id}${RESET}..."
+  if ! "${COMPOSE[@]}" exec -T openclaw sh -lc "mkdir -p '${workspace}' && openclaw agents add '${agent_id}' --workspace '${workspace}' --non-interactive"; then
+    warn "Unable to bootstrap agent ${agent_id} automatically."
+    return
+  fi
+
+  "${COMPOSE[@]}" exec -T openclaw sh -lc "openclaw agents set-identity --agent '${agent_id}' --name '${display_name}' --theme '${theme}' --json >/dev/null 2>&1 || true"
+}
+
+bootstrap_agent_team() {
+  local port
+  port="$(get_env_value "OPENCLAW_PORT")"
+  wait_for_http "http://localhost:${port:-18789}/health" "OpenClaw gateway" || return 0
+
+  bold "Bootstrapping AI team:"
+  ensure_agent "research" "/home/node/.openclaw/workspace/research" "Research Lead" "cyan"
+  ensure_agent "builder" "/home/node/.openclaw/workspace/builder" "Build Lead" "blue"
+  ensure_agent "ops" "/home/node/.openclaw/workspace/ops" "Ops Lead" "green"
+  ensure_agent "qa" "/home/node/.openclaw/workspace/qa" "QA Lead" "amber"
+}
+
+# ── Commands ──────────────────────────────────────────
+
+cmd_install() {
+  banner
+  bold "Installing clawstack..."
+  echo ""
+
+  check_deps
+
+  # Copy .env if missing
+  if [ ! -f "$CLAWSTACK_DIR/.env" ]; then
+    cp "$CLAWSTACK_DIR/.env.example" "$CLAWSTACK_DIR/.env"
+    success "Created .env from .env.example"
+    warn "Edit ${BOLD}$CLAWSTACK_DIR/.env${RESET} with your API keys before starting."
+  else
+    dim "  .env already exists, skipping."
+  fi
+
+  ensure_mission_control_auth
+  ensure_openclaw_gateway_auth
+  ensure_data_dirs
+  success "Prepared bind-mounted data directories in $DATA_ROOT"
+
+  # Add clawstack to PATH via shell profile
+  SHELL_PROFILE=""
+  if [ -f "$HOME/.zshrc" ]; then
+    SHELL_PROFILE="$HOME/.zshrc"
+  elif [ -f "$HOME/.bashrc" ]; then
+    SHELL_PROFILE="$HOME/.bashrc"
+  elif [ -f "$HOME/.bash_profile" ]; then
+    SHELL_PROFILE="$HOME/.bash_profile"
+  fi
+
+  INSTALL_LINE="export PATH=\"$CLAWSTACK_DIR/scripts:\$PATH\""
+
+  if [ -n "$SHELL_PROFILE" ]; then
+    if ! grep -q "clawstack" "$SHELL_PROFILE" 2>/dev/null; then
+      echo "" >> "$SHELL_PROFILE"
+      echo "# clawstack" >> "$SHELL_PROFILE"
+      echo "$INSTALL_LINE" >> "$SHELL_PROFILE"
+      success "Added clawstack to PATH in $SHELL_PROFILE"
+      warn "Run ${BOLD}source $SHELL_PROFILE${RESET} or restart your terminal."
+    else
+      dim "  clawstack already in PATH."
+    fi
+  fi
+
+  echo ""
+  success "clawstack installed!"
+  echo ""
+  dim "  Next steps:"
+  say "  1. Edit ${BOLD}.env${RESET} with your OPENROUTER_API_KEY"
+  say "  2. Run ${BOLD}clawstack start${RESET}"
+  say "  3. Open ${BOLD}http://localhost${RESET} for Mission Control"
+  show_mission_control_password
+  show_openclaw_gateway_password
+  echo ""
+}
+
+cmd_start() {
+  check_deps
+  check_env
+  ensure_mission_control_auth
+  ensure_openclaw_gateway_auth
+  ensure_data_dirs
+  log "Starting clawstack..."
+  "${COMPOSE[@]}" up -d --build
+  bootstrap_agent_team
+  echo ""
+  success "clawstack is running!"
+  echo ""
+  say "  🖥️  Mission Control  →  ${BOLD}http://localhost${RESET}"
+  say "  🦞  OpenClaw         →  ${BOLD}http://localhost:18789${RESET}"
+  say "  💾  Stack data root  →  ${BOLD}${DATA_ROOT}${RESET}"
+  show_mission_control_password
+  show_openclaw_gateway_password
+  echo ""
+}
+
+cmd_stop() {
+  check_deps
+  log "Stopping clawstack..."
+  "${COMPOSE[@]}" down
+  success "clawstack stopped."
+}
+
+cmd_restart() {
+  cmd_stop
+  echo ""
+  cmd_start
+}
+
+cmd_status() {
+  check_deps
+  bold "clawstack status:"
+  echo ""
+  "${COMPOSE[@]}" ps
+  echo ""
+
+  # Gateway health check
+  if curl -sf http://localhost:18789/health &>/dev/null; then
+    success "OpenClaw gateway: ${GREEN}healthy${RESET}"
+  else
+    warn "OpenClaw gateway: not reachable"
+  fi
+
+  # Mission Control health
+  if curl -sf http://localhost:4000 &>/dev/null; then
+    success "Mission Control:  ${GREEN}healthy${RESET}"
+  else
+    warn "Mission Control:  not reachable"
+  fi
+  echo ""
+}
+
+cmd_logs() {
+  check_deps
+  local service="${1:-}"
+  if [ -n "$service" ]; then
+    "${COMPOSE[@]}" logs -f "$service"
+  else
+    "${COMPOSE[@]}" logs -f
+  fi
+}
+
+cmd_update() {
+  check_deps
+  log "Pulling latest images..."
+  "${COMPOSE[@]}" pull
+  success "Images updated. Run ${BOLD}clawstack restart${RESET} to apply."
+}
+
+cmd_doctor() {
+  check_deps
+  check_env
+  ensure_data_dirs
+  local postgres_user
+  local postgres_db
+  postgres_user="$(get_env_value "POSTGRES_USER")"
+  postgres_db="$(get_env_value "POSTGRES_DB")"
+  postgres_user="${postgres_user:-clawstack}"
+  postgres_db="${postgres_db:-clawstack}"
+
+  bold "clawstack doctor:"
+  echo ""
+  "${COMPOSE[@]}" ps
+  echo ""
+
+  local path
+  for path in \
+    "$DATA_ROOT/openclaw/config" \
+    "$DATA_ROOT/openclaw/workspace" \
+    "$DATA_ROOT/postgres" \
+    "$DATA_ROOT/redis" \
+    "$DATA_ROOT/qdrant"; do
+    if [ -d "$path" ]; then
+      success "bind mount present: $path"
+    else
+      warn "bind mount missing: $path"
+    fi
+  done
+
+  echo ""
+
+  if "${COMPOSE[@]}" exec -T postgres psql -U "$postgres_user" -d "$postgres_db" -c "SELECT schema_name FROM information_schema.schemata WHERE schema_name = 'mission_control';" >/dev/null 2>&1; then
+    success "Postgres mission_control schema check completed"
+    "${COMPOSE[@]}" exec -T postgres psql -U "$postgres_user" -d "$postgres_db" -c "SELECT table_name FROM information_schema.tables WHERE table_schema = 'mission_control' ORDER BY table_name;"
+  else
+    warn "Postgres mission_control schema check failed"
+  fi
+
+  echo ""
+
+  if "${COMPOSE[@]}" exec -T redis redis-cli INFO persistence >/dev/null 2>&1; then
+    success "Redis persistence check completed"
+    "${COMPOSE[@]}" exec -T redis redis-cli DBSIZE
+    "${COMPOSE[@]}" exec -T redis redis-cli INFO persistence
+  else
+    warn "Redis persistence check failed"
+  fi
+
+  echo ""
+
+  if "${COMPOSE[@]}" exec -T qdrant /bin/busybox wget -qO- http://127.0.0.1:6333/collections >/dev/null 2>&1; then
+    success "Qdrant collections check completed"
+    "${COMPOSE[@]}" exec -T qdrant /bin/busybox wget -qO- http://127.0.0.1:6333/collections
+    echo ""
+  else
+    warn "Qdrant collections check failed"
+  fi
+
+  echo ""
+
+  if "${COMPOSE[@]}" exec -T openclaw sh -lc "find /home/node/.openclaw -maxdepth 2 -type f | sort | sed -n '1,40p'" >/dev/null 2>&1; then
+    success "OpenClaw persistence files"
+    "${COMPOSE[@]}" exec -T openclaw sh -lc "find /home/node/.openclaw -maxdepth 2 -type f | sort | sed -n '1,40p'"
+  else
+    warn "OpenClaw persistence inspection failed"
+  fi
+}
+
+cmd_reset() {
+  check_deps
+  warn "This will ${RED}stop containers and delete bind-mounted data${RESET} under ${DATA_ROOT}."
+  echo -n "  Are you sure? [y/N] "
+  read -r confirm
+  if [[ "$confirm" =~ ^[Yy]$ ]]; then
+    log "Resetting clawstack..."
+    "${COMPOSE[@]}" down
+    rm -rf "$DATA_ROOT"
+    success "Reset complete. Run ${BOLD}clawstack start${RESET} to start fresh."
+  else
+    dim "  Cancelled."
+  fi
+}
+
+cmd_shell() {
+  local service="${1:-openclaw}"
+  log "Opening shell in ${BOLD}$service${RESET}..."
+  "${COMPOSE[@]}" exec "$service" sh
+}
+
+cmd_help() {
+  banner
+  bold "Usage:"
+  echo "  clawstack <command> [options]"
+  echo ""
+  bold "Commands:"
+  say "  ${BOLD}install${RESET}          Set up clawstack and add to PATH"
+  say "  ${BOLD}start${RESET}            Start all containers"
+  say "  ${BOLD}stop${RESET}             Stop all containers"
+  say "  ${BOLD}restart${RESET}          Restart all containers"
+  say "  ${BOLD}status${RESET}           Show container status and health"
+  say "  ${BOLD}logs [service]${RESET}   Tail logs (all or specific service)"
+  say "  ${BOLD}team${RESET}             Bootstrap the default AI agent team"
+  say "  ${BOLD}update${RESET}           Pull latest Docker images"
+  say "  ${BOLD}doctor${RESET}           Inspect live stack health and persistence"
+  say "  ${BOLD}reset${RESET}            Wipe bind-mounted data and start fresh"
+  say "  ${BOLD}shell [service]${RESET}  Open a shell in a container"
+  say "  ${BOLD}help${RESET}             Show this help"
+  echo ""
+  bold "Services:"
+  dim "  openclaw, mission-control, postgres, redis, qdrant, nginx"
+  echo ""
+  bold "Examples:"
+  echo "  clawstack start"
+  echo "  clawstack team"
+  echo "  clawstack logs openclaw"
+  echo "  clawstack shell postgres"
+  echo ""
+}
+
+cmd_team() {
+  check_deps
+  check_env
+  bootstrap_agent_team
+}
+
+# ── Router ────────────────────────────────────────────
+COMMAND="${1:-help}"
+shift || true
+
+case "$COMMAND" in
+  install)   cmd_install ;;
+  start)     cmd_start ;;
+  stop)      cmd_stop ;;
+  restart)   cmd_restart ;;
+  status)    cmd_status ;;
+  logs)      cmd_logs "$@" ;;
+  team)      cmd_team ;;
+  update)    cmd_update ;;
+  doctor)    cmd_doctor ;;
+  reset)     cmd_reset ;;
+  shell)     cmd_shell "$@" ;;
+  help|--help|-h) cmd_help ;;
+  *)
+    error "Unknown command: $COMMAND"
+    echo "  Run ${BOLD}clawstack help${RESET} for usage."
+    exit 1
+    ;;
+esac
