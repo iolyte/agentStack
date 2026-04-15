@@ -1,8 +1,8 @@
 import { Pool } from 'pg'
 import { logger } from '@/lib/logger'
 
-const SCHEMA_VERSION = '1'
-const DEFAULT_BUILD_VERSION = 'phase1'
+const SCHEMA_VERSION = '2'
+const DEFAULT_BUILD_VERSION = 'phase3-admin'
 
 export type MissionControlMetadata = {
   schemaVersion: string
@@ -60,6 +60,28 @@ async function bootstrapMissionControlSchema(): Promise<MissionControlMetadata> 
       last_booted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mission_control.preferences (
+      singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+      appearance_preference TEXT NOT NULL DEFAULT 'system',
+      density_preference TEXT NOT NULL DEFAULT 'comfortable',
+      show_completed_tasks BOOLEAN NOT NULL DEFAULT FALSE,
+      refresh_interval_seconds INTEGER NOT NULL DEFAULT 15,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS mission_control.tasks (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT,
+      status TEXT NOT NULL DEFAULT 'backlog',
+      priority TEXT NOT NULL DEFAULT 'medium',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      completed_at TIMESTAMPTZ
+    )
+  `)
   await pool.query(
     `
       INSERT INTO mission_control.metadata (singleton, schema_version, build_version, last_booted_at)
@@ -72,6 +94,19 @@ async function bootstrapMissionControlSchema(): Promise<MissionControlMetadata> 
     `,
     [SCHEMA_VERSION, buildVersion],
   )
+  await pool.query(`
+    INSERT INTO mission_control.preferences (
+      singleton,
+      appearance_preference,
+      density_preference,
+      show_completed_tasks,
+      refresh_interval_seconds,
+      updated_at
+    )
+    VALUES (TRUE, 'system', 'comfortable', FALSE, 15, NOW())
+    ON CONFLICT (singleton)
+    DO NOTHING
+  `)
 
   const result = await pool.query<{
     schema_version: string

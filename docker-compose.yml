@@ -56,7 +56,7 @@ services:
       QDRANT_URL: http://qdrant:6333
       NGINX_URL: http://nginx
       STACK_DATA_ROOT: /stack-data
-      MISSION_CONTROL_BUILD: phase1
+      MISSION_CONTROL_BUILD: phase3-admin
     depends_on:
       openclaw:
         condition: service_healthy

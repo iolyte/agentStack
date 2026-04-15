@@ -1,7 +1,10 @@
 import { inspectPersistence } from '@/lib/persistence'
+import { getDashboardPreferences } from '@/lib/preferences'
+import { getOpenClawConfigSummary } from '@/lib/openclaw-config'
 import { listAgents, listSessions } from '@/lib/openclaw'
 import { collectStackHealth } from '@/lib/services'
 import { logger } from '@/lib/logger'
+import { listMissionControlTasks, summarizeTasks } from '@/lib/tasks'
 import type { GatewaySnapshot, OverviewPayload, PersistenceStatus, ServiceHealth, SetupIssue } from '@/lib/types'
 
 function uniqueStrings(values: string[]) {
@@ -37,7 +40,12 @@ async function resolveGatewaySnapshot(services: ServiceHealth[]): Promise<Gatewa
   }
 }
 
-function buildSetupIssues(services: ServiceHealth[], persistence: PersistenceStatus[], gateway: GatewaySnapshot) {
+function buildSetupIssues(
+  services: ServiceHealth[],
+  persistence: PersistenceStatus[],
+  gateway: GatewaySnapshot,
+  openclawConfig: ReturnType<typeof getOpenClawConfigSummary>,
+) {
   const issues: SetupIssue[] = []
 
   for (const service of services) {
@@ -90,6 +98,24 @@ function buildSetupIssues(services: ServiceHealth[], persistence: PersistenceSta
     })
   }
 
+  if (!openclawConfig.exists) {
+    issues.push({
+      id: 'openclaw-config-missing',
+      severity: 'warning',
+      title: 'OpenClaw config file is missing',
+      details: 'Mission Control could not find the persisted OpenClaw config file on disk.',
+      action: 'Verify `.data/openclaw/config/openclaw.json` exists and restart the stack if needed.',
+    })
+  } else if (!openclawConfig.valid) {
+    issues.push({
+      id: 'openclaw-config-invalid',
+      severity: 'warning',
+      title: 'OpenClaw config file is not valid JSON',
+      details: 'Mission Control found the config file but could not parse it safely.',
+      action: 'Inspect the config file and run `openclaw config validate --json` inside the gateway container.',
+    })
+  }
+
   if (issues.length === 0) {
     issues.push({
       id: 'stack-ready',
@@ -105,17 +131,30 @@ function buildSetupIssues(services: ServiceHealth[], persistence: PersistenceSta
 
 export async function getOverviewPayload(): Promise<OverviewPayload> {
   const services = await collectStackHealth()
-  const [persistence, gateway] = await Promise.all([inspectPersistence(services), resolveGatewaySnapshot(services)])
+  const [persistence, gateway, preferences] = await Promise.all([
+    inspectPersistence(services),
+    resolveGatewaySnapshot(services),
+    getDashboardPreferences(),
+  ])
+  const openclawConfig = getOpenClawConfigSummary()
+  const tasks = await listMissionControlTasks(preferences.showCompletedTasks)
 
   return {
     generatedAt: new Date().toISOString(),
     services,
     persistence,
     gateway,
-    setupIssues: buildSetupIssues(services, persistence, gateway),
+    openclawConfig,
+    setupIssues: buildSetupIssues(services, persistence, gateway, openclawConfig),
+    preferences,
+    tasks: {
+      summary: summarizeTasks(tasks),
+      recent: tasks.slice(0, 8),
+    },
     ui: {
-      appearance: 'system',
-      refreshSeconds: 15,
+      appearance: preferences.appearancePreference,
+      density: preferences.densityPreference,
+      refreshSeconds: preferences.refreshIntervalSeconds,
     },
   }
 }

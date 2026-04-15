@@ -6,6 +6,6 @@ export async function GET() {
   return NextResponse.json({
     ok: true,
     timestamp: new Date().toISOString(),
-    build: process.env.MISSION_CONTROL_BUILD?.trim() || 'phase1',
+    build: process.env.MISSION_CONTROL_BUILD?.trim() || 'phase3-admin',
   })
 }

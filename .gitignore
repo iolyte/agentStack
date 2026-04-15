@@ -10,4 +10,5 @@ mission-control/node_modules/
 mission-control/data/
 mission-control/*.db
 mission-control/tsconfig.tsbuildinfo
+mission-control/tsconfig.typecheck.tsbuildinfo
 .data/

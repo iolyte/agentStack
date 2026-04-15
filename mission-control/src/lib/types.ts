@@ -1,6 +1,10 @@
 export type ServiceStatus = 'healthy' | 'degraded' | 'down' | 'unknown'
 export type StoreStatus = 'healthy' | 'warning' | 'down' | 'unknown'
 export type AgentStatus = 'active' | 'idle' | 'working'
+export type AppearancePreference = 'system' | 'light' | 'dark'
+export type DensityPreference = 'comfortable' | 'compact'
+export type TaskStatus = 'backlog' | 'in_progress' | 'blocked' | 'done'
+export type TaskPriority = 'low' | 'medium' | 'high'
 
 export interface ServiceHealth {
   name: string
@@ -81,6 +85,47 @@ export interface GatewaySnapshot {
   sessions: SessionInfo[]
 }
 
+export interface OpenClawConfiguredAgent {
+  id: string
+  name: string
+  workspace: string | null
+  agentDir: string | null
+  identityName: string | null
+  identityTheme: string | null
+}
+
+export interface OpenClawConfigSummary {
+  path: string
+  exists: boolean
+  valid: boolean
+  lastTouchedVersion: string | null
+  lastTouchedAt: string | null
+  allowedOrigins: string[]
+  configuredAgents: OpenClawConfiguredAgent[]
+}
+
+export interface AgentWorkspaceSummary {
+  agentId: string
+  rootPath: string
+  exists: boolean
+  fileCount: number
+  sessionRegistryCount: number
+  modelProviderCount: number
+  modelCount: number
+  updatedAt: string | null
+  files: string[]
+}
+
+export interface PersistedChatSession {
+  sessionKey: string
+  sessionId: string | null
+  agentId: string
+  updatedAt: string
+  sessionFile: string | null
+  originLabel: string | null
+  deliveryTarget: string | null
+}
+
 export interface SetupIssue {
   id: string
   severity: 'critical' | 'warning' | 'info'
@@ -89,14 +134,48 @@ export interface SetupIssue {
   action: string
 }
 
+export interface DashboardPreferences {
+  appearancePreference: AppearancePreference
+  densityPreference: DensityPreference
+  showCompletedTasks: boolean
+  refreshIntervalSeconds: number
+}
+
+export interface MissionControlTask {
+  id: string
+  title: string
+  description: string | null
+  status: TaskStatus
+  priority: TaskPriority
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+}
+
+export interface TaskSummary {
+  total: number
+  open: number
+  inProgress: number
+  blocked: number
+  done: number
+  highPriorityOpen: number
+}
+
 export interface OverviewPayload {
   generatedAt: string
   services: ServiceHealth[]
   persistence: PersistenceStatus[]
   gateway: GatewaySnapshot
+  openclawConfig: OpenClawConfigSummary
   setupIssues: SetupIssue[]
+  preferences: DashboardPreferences
+  tasks: {
+    summary: TaskSummary
+    recent: MissionControlTask[]
+  }
   ui: {
-    appearance: 'system'
+    appearance: AppearancePreference
+    density: DensityPreference
     refreshSeconds: number
   }
 }
