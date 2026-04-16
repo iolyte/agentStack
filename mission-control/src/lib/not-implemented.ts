@@ -4,7 +4,7 @@ export function notImplementedResponse() {
   return NextResponse.json(
     {
       ok: false,
-      error: 'Not implemented in Phase 1 rebuild',
+      error: 'This endpoint is not available in the current ClawStack build.',
     },
     { status: 501 },
   )

@@ -11,6 +11,7 @@ clawstack uses tag-based GitHub Releases.
 3. Run local validation:
    - `cd mission-control && npm run lint`
    - `cd mission-control && npm run typecheck`
+   - `cd mission-control && npm run test`
    - `cd mission-control && npm run build`
    - `docker compose config -q`
 4. Create an annotated tag:

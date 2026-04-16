@@ -4,7 +4,7 @@ import './globals.css'
 
 export const metadata: Metadata = {
   title: 'clawstack mission control',
-  description: 'Read-only operations dashboard for clawstack health, persistence, and gateway diagnostics.',
+  description: 'ClawStack Mission Control: workspace orchestration for local-first agent teams, tasks, chat, and stack operations.',
 }
 
 export default function RootLayout({ children }: { children: ReactNode }) {

@@ -1,11 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireApiAuth } from '@/lib/api-auth'
+import { getAuthenticatedSession, requireApiAuth } from '@/lib/api-auth'
 import { logger } from '@/lib/logger'
-import { getDashboardPreferences } from '@/lib/preferences'
-import { createMissionControlTask, listMissionControlTasks, summarizeTasks, updateMissionControlTask } from '@/lib/tasks'
-import type { TaskPriority, TaskStatus } from '@/lib/types'
+import type { TaskPriority, TaskStatus, WorkspaceTask } from '@/lib/types'
+import {
+  createWorkspaceTaskForUser,
+  getWorkspaceSnapshotForUser,
+  updateWorkspaceTaskForUser,
+} from '@/lib/workspace'
 
 export const dynamic = 'force-dynamic'
+
+function summarizeTasks(tasks: WorkspaceTask[]) {
+  return tasks.reduce(
+    (summary, task) => {
+      summary.total += 1
+
+      if (task.status === 'done') {
+        summary.done += 1
+      } else {
+        summary.open += 1
+      }
+
+      if (task.status === 'in_progress') {
+        summary.inProgress += 1
+      }
+
+      if (task.status === 'blocked') {
+        summary.blocked += 1
+      }
+
+      if (task.priority === 'high' && task.status !== 'done') {
+        summary.highPriorityOpen += 1
+      }
+
+      return summary
+    },
+    {
+      total: 0,
+      open: 0,
+      inProgress: 0,
+      blocked: 0,
+      done: 0,
+      highPriorityOpen: 0,
+    },
+  )
+}
 
 export async function GET(request: NextRequest) {
   const unauthorized = requireApiAuth(request)
@@ -14,13 +53,18 @@ export async function GET(request: NextRequest) {
     return unauthorized
   }
 
-  const preferences = await getDashboardPreferences()
-  const tasks = await listMissionControlTasks(preferences.showCompletedTasks)
+  const session = getAuthenticatedSession(request)
+
+  if (!session) {
+    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const snapshot = await getWorkspaceSnapshotForUser(session)
 
   return NextResponse.json({
     ok: true,
-    tasks,
-    summary: summarizeTasks(tasks),
+    tasks: snapshot.tasks,
+    summary: summarizeTasks(snapshot.tasks),
   })
 }
 
@@ -31,24 +75,33 @@ export async function POST(request: NextRequest) {
     return unauthorized
   }
 
+  const session = getAuthenticatedSession(request)
+
+  if (!session) {
+    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  }
+
   try {
     const body = (await request.json()) as {
       title?: string
       description?: string | null
       priority?: TaskPriority
+      assignedAgentId?: string | null
     }
-    const task = await createMissionControlTask({
+    const snapshot = await createWorkspaceTaskForUser(session, {
       title: body.title ?? '',
       description: body.description,
       priority: body.priority,
+      assignedAgentId: body.assignedAgentId ?? null,
     })
 
     return NextResponse.json({
       ok: true,
-      task,
+      tasks: snapshot.tasks,
+      summary: summarizeTasks(snapshot.tasks),
     })
   } catch (error) {
-    logger.warn('Mission Control task creation failed', {
+    logger.warn('Workspace task creation failed', {
       error: error instanceof Error ? error.message : String(error),
     })
 
@@ -69,33 +122,38 @@ export async function PATCH(request: NextRequest) {
     return unauthorized
   }
 
+  const session = getAuthenticatedSession(request)
+
+  if (!session) {
+    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  }
+
   try {
     const body = (await request.json()) as {
       id?: string
-      title?: string
-      description?: string | null
       status?: TaskStatus
       priority?: TaskPriority
+      assignedAgentId?: string | null
     }
 
-    if (!body.id) {
+    if (!body.id?.trim()) {
       throw new Error('Task id is required')
     }
 
-    const task = await updateMissionControlTask({
-      id: body.id,
-      title: body.title,
-      description: body.description,
+    const snapshot = await updateWorkspaceTaskForUser(session, {
+      id: body.id.trim(),
       status: body.status,
       priority: body.priority,
+      assignedAgentId: body.assignedAgentId ?? null,
     })
 
     return NextResponse.json({
       ok: true,
-      task,
+      tasks: snapshot.tasks,
+      summary: summarizeTasks(snapshot.tasks),
     })
   } catch (error) {
-    logger.warn('Mission Control task update failed', {
+    logger.warn('Workspace task update failed', {
       error: error instanceof Error ? error.message : String(error),
     })
 

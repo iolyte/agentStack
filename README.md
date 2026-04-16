@@ -16,7 +16,7 @@
 | Service | Purpose |
 |---|---|
 | 🦞 **openclaw** | OpenClaw gateway + agent runtime (port 18789) |
-| 🖥️ **mission-control** | Password-protected read-only control deck for stack health, persistence verification, and gateway diagnostics |
+| 🖥️ **mission-control** | ClawStack workspace and operations surface for setup, agent chat, task management, persistence verification, and gateway diagnostics |
 | 🗃️ **postgres** | Structured data — sessions, tasks, agent state |
 | ⚡ **redis** | Pub/sub, caching, inter-agent messaging |
 | 🔍 **qdrant** | Vector store for embeddings & semantic search |
@@ -76,11 +76,11 @@ clawstack shell <svc> # open a shell in a container
 
 ## Mission Control features
 
-- **Overview** — Apple-inspired diagnostics surface for stack health and persistence
-- **Health** — live probes for gateway, Postgres, Redis, Qdrant, nginx, and Mission Control
-- **Persistence** — direct visibility into bind-mounted storage on your Mac
-- **Gateway snapshot** — live agent and session counts from OpenClaw
-- **Setup issues** — clear remediation hints when a service or data root needs attention
+- **Workspace bootstrap** — define a goal, choose departments, and let ClawStack create the first team and backlog
+- **Agent management** — inspect the live roster, add specialists, and keep the workspace scoped by role
+- **Task execution board** — assign work, update states, and keep the next deliverables visible
+- **Agent chat** — send instructions to one agent at a time with persisted message history
+- **Ops diagnostics** — keep the original stack health, persistence, and gateway visibility in one operator tab
 
 ---
 
@@ -112,6 +112,10 @@ All config lives in `.env`. See `.env.example` for all options.
 | `OPENCLAW_GATEWAY_PASSWORD` | auto-generated | Shared password used by OpenClaw gateway auth and Mission Control's automatic gateway connection |
 | `MC_ADMIN_PASSWORD` | auto-generated | Password for the Mission Control browser dashboard |
 | `MC_SESSION_SECRET` | auto-generated | Session signing secret for Mission Control |
+| `AUTH_JWT_SECRET` | optional | Dedicated JWT signing secret for GitHub OAuth sessions |
+| `APP_BASE_URL` | optional | Public base URL used for GitHub OAuth callbacks |
+| `GITHUB_CLIENT_ID` | optional | Enables GitHub OAuth sign-in when paired with the client secret |
+| `GITHUB_CLIENT_SECRET` | optional | Enables GitHub OAuth sign-in when paired with the client ID |
 | `MC_SECURE_COOKIES` | optional | Set to `true` only when serving Mission Control over HTTPS |
 | `POSTGRES_PASSWORD` | ✅ | Set a strong password |
 | `ANTHROPIC_API_KEY` | optional | Direct Anthropic access |
@@ -121,6 +125,9 @@ All config lives in `.env`. See `.env.example` for all options.
 `MC_ADMIN_PASSWORD`, and `MC_SESSION_SECRET` if they are missing, prints the
 generated passwords in the terminal, and bootstraps a default operator team
 (`research`, `builder`, `ops`, `qa`) inside OpenClaw.
+
+If GitHub OAuth variables are not configured, Mission Control stays fully local
+with the generated password flow.
 
 ---
 
@@ -136,7 +143,8 @@ All service data now lives in bind-mounted folders under `.data/`, which makes i
 | `.data/redis` | Redis persistence files |
 | `.data/qdrant` | Qdrant storage |
 
-Mission Control Phase 1 stores its durable metadata in PostgreSQL under the `mission_control` schema.
+Mission Control stores operational metadata in PostgreSQL under the `mission_control`
+schema and workspace data under the `amp` schema.
 
 ---
 

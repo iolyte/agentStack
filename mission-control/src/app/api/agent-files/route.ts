@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireApiAuth } from '@/lib/api-auth'
+import { setGatewayAgentFile } from '@/lib/gateway-client'
 import { getAgentWorkspaceSummary, listAgentWorkspaceSummaries } from '@/lib/agent-workspace'
-import { notImplementedResponse } from '@/lib/not-implemented'
+import { logger } from '@/lib/logger'
 
 export const dynamic = 'force-dynamic'
 
@@ -46,5 +47,34 @@ export async function POST(request: NextRequest) {
     return unauthorized
   }
 
-  return notImplementedResponse()
+  try {
+    const body = (await request.json()) as {
+      agentId?: string
+      name?: string
+      content?: string
+    }
+
+    if (!body.agentId?.trim() || !body.name?.trim()) {
+      throw new Error('agentId and name are required')
+    }
+
+    const result = await setGatewayAgentFile(body.agentId.trim(), body.name.trim(), body.content ?? '')
+
+    return NextResponse.json({
+      ok: true,
+      file: result.file ?? null,
+    })
+  } catch (error) {
+    logger.warn('Agent file update failed', {
+      error: error instanceof Error ? error.message : String(error),
+    })
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to update the agent file',
+      },
+      { status: 400 },
+    )
+  }
 }

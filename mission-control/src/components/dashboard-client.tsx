@@ -1,74 +1,97 @@
 'use client'
 
-import { startTransition, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { startTransition, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import {
   Activity,
   AlertTriangle,
   Bot,
   CheckCircle2,
-  Database,
+  ChevronRight,
   FileCode2,
   FolderTree,
   LayoutDashboard,
   ListTodo,
   MessagesSquare,
   RefreshCw,
+  Rocket,
+  Server,
+  Settings2,
   SlidersHorizontal,
 } from 'lucide-react'
 import type {
   AgentWorkspaceSummary,
   AppearancePreference,
+  AuthMode,
+  AuthenticatedUser,
   DashboardPreferences,
   DensityPreference,
-  MissionControlTask,
-  OpenClawConfiguredAgent,
+  Department,
   OverviewPayload,
   PersistedChatSession,
   SetupIssue,
-  SessionInfo,
   TaskPriority,
   TaskStatus,
+  WorkspaceAgent,
+  WorkspaceMessage,
+  WorkspaceSnapshot,
+  WorkspaceTask,
 } from '@/lib/types'
 
 type SessionState = {
   loading: boolean
   authenticated: boolean
   passwordRequired: boolean
+  oauthAvailable: boolean
+  authMode: AuthMode | null
+  user: AuthenticatedUser | null
+  needsSetup: boolean
 }
 
 type SessionResponse = {
   ok: boolean
   authenticated: boolean
   passwordRequired: boolean
+  oauthAvailable: boolean
+  authMode: AuthMode | null
+  user: AuthenticatedUser | null
+  needsSetup: boolean
 }
 
-type PanelView = 'overview' | 'agents' | 'sessions' | 'tasks' | 'config' | 'settings'
+type WorkspaceResponse = {
+  ok: boolean
+  error?: string
+} & WorkspaceSnapshot & {
+    oauthAvailable: boolean
+  }
 
-type SettingsState = DashboardPreferences
+type MessagesResponse = {
+  ok: boolean
+  error?: string
+  messages?: WorkspaceMessage[]
+}
 
-type AgentRegistryRow = {
-  id: string
+type OpsState = {
+  payload: OverviewPayload | null
+  workspaceInventory: AgentWorkspaceSummary[]
+  persistedSessions: PersistedChatSession[]
+}
+
+type PanelView = 'overview' | 'agents' | 'chat' | 'tasks' | 'ops' | 'settings'
+
+const DEPARTMENT_OPTIONS: Array<{
+  id: Department
   label: string
-  workspace: string | null
-  theme: string | null
-  model: string
-  source: string
-  status: string
-  sessions: number
-}
+  description: string
+}> = [
+  { id: 'research', label: 'Research', description: 'Requirements, references, and edge cases.' },
+  { id: 'builder', label: 'Builder', description: 'Implementation and delivery velocity.' },
+  { id: 'designer', label: 'Designer', description: 'Interaction, UX, and interface polish.' },
+  { id: 'ops', label: 'Ops', description: 'Runtime, deployment, and infrastructure safety.' },
+  { id: 'qa', label: 'QA', description: 'Verification, regression checks, and release confidence.' },
+  { id: 'marketing', label: 'Marketing', description: 'Story, launch framing, and messaging.' },
+]
 
-type AgentFilesResponse = {
-  ok: boolean
-  error?: string
-  agents?: AgentWorkspaceSummary[]
-}
-
-type ChatResponse = {
-  ok: boolean
-  error?: string
-  liveSessions?: SessionInfo[]
-  persistedSessions?: PersistedChatSession[]
-}
+const EMPTY_TASKS: WorkspaceTask[] = []
 
 function cls(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(' ')
@@ -103,11 +126,11 @@ function formatRelativeTime(value: string) {
 }
 
 function statusTone(status: string) {
-  if (status === 'healthy' || status === 'active' || status === 'done' || status === 'live') {
+  if (status === 'healthy' || status === 'active' || status === 'done' || status === 'working') {
     return 'tone-green'
   }
 
-  if (status === 'warning' || status === 'degraded' || status === 'blocked' || status === 'config only') {
+  if (status === 'warning' || status === 'degraded' || status === 'blocked' || status === 'configured') {
     return 'tone-amber'
   }
 
@@ -138,30 +161,35 @@ function prettifyTaskStatus(status: TaskStatus) {
   return status.charAt(0).toUpperCase() + status.slice(1)
 }
 
-function buildAgentRegistry(payload: OverviewPayload): AgentRegistryRow[] {
-  const liveById = new Map(payload.gateway.agents.map((agent) => [agent.id, agent]))
-  const configuredById = new Map(payload.openclawConfig.configuredAgents.map((agent) => [agent.id, agent]))
-  const sessionCounts = payload.gateway.sessions.reduce<Record<string, number>>((accumulator, session) => {
-    accumulator[session.agentId] = (accumulator[session.agentId] || 0) + 1
-    return accumulator
-  }, {})
-  const ids = Array.from(new Set([...configuredById.keys(), ...liveById.keys()])).sort((left, right) => left.localeCompare(right))
+function summarizeWorkspaceTasks(tasks: WorkspaceTask[]) {
+  return tasks.reduce(
+    (summary, task) => {
+      summary.total += 1
 
-  return ids.map((id) => {
-    const configured = configuredById.get(id)
-    const live = liveById.get(id)
+      if (task.status === 'done') {
+        summary.done += 1
+      } else {
+        summary.open += 1
+      }
 
-    return {
-      id,
-      label: configured?.identityName || configured?.name || live?.name || id,
-      workspace: configured?.workspace || null,
-      theme: configured?.identityTheme || null,
-      model: live?.model || 'No live model detected',
-      source: configured && live ? 'config + live' : configured ? 'config only' : 'live only',
-      status: live?.status || 'config only',
-      sessions: sessionCounts[id] || live?.sessions || 0,
-    }
-  })
+      if (task.status === 'in_progress') {
+        summary.inProgress += 1
+      }
+
+      if (task.status === 'blocked') {
+        summary.blocked += 1
+      }
+
+      return summary
+    },
+    {
+      total: 0,
+      open: 0,
+      inProgress: 0,
+      blocked: 0,
+      done: 0,
+    },
+  )
 }
 
 function ViewHeader({
@@ -187,37 +215,59 @@ export default function DashboardClient() {
     loading: true,
     authenticated: false,
     passwordRequired: true,
+    oauthAvailable: false,
+    authMode: null,
+    user: null,
+    needsSetup: false,
   })
   const [activeView, setActiveView] = useState<PanelView>('overview')
-  const [payload, setPayload] = useState<OverviewPayload | null>(null)
-  const [workspaceInventory, setWorkspaceInventory] = useState<AgentWorkspaceSummary[]>([])
-  const [persistedSessions, setPersistedSessions] = useState<PersistedChatSession[]>([])
+  const [workspace, setWorkspace] = useState<WorkspaceResponse | null>(null)
+  const [ops, setOps] = useState<OpsState>({
+    payload: null,
+    workspaceInventory: [],
+    persistedSessions: [],
+  })
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
+  const [messagesByAgent, setMessagesByAgent] = useState<Record<string, WorkspaceMessage[]>>({})
   const [password, setPassword] = useState('')
+  const [goal, setGoal] = useState('')
+  const [selectedDepartments, setSelectedDepartments] = useState<Department[]>(['research', 'builder', 'qa'])
   const [taskTitle, setTaskTitle] = useState('')
   const [taskDescription, setTaskDescription] = useState('')
   const [taskPriority, setTaskPriority] = useState<TaskPriority>('medium')
-  const [settings, setSettings] = useState<SettingsState | null>(null)
+  const [taskAgentId, setTaskAgentId] = useState<string>('')
+  const [chatDraft, setChatDraft] = useState('')
+  const [newAgentName, setNewAgentName] = useState('')
+  const [newAgentRole, setNewAgentRole] = useState('')
+  const [newAgentDepartment, setNewAgentDepartment] = useState<Department>('builder')
+  const [settings, setSettings] = useState<DashboardPreferences | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loginError, setLoginError] = useState<string | null>(null)
+  const [setupError, setSetupError] = useState<string | null>(null)
   const [taskError, setTaskError] = useState<string | null>(null)
+  const [chatError, setChatError] = useState<string | null>(null)
+  const [agentError, setAgentError] = useState<string | null>(null)
   const [settingsError, setSettingsError] = useState<string | null>(null)
   const [refreshing, setRefreshing] = useState(false)
+  const [bootstrapping, setBootstrapping] = useState(false)
   const [creatingTask, setCreatingTask] = useState(false)
   const [updatingTaskId, setUpdatingTaskId] = useState<string | null>(null)
+  const [loadingMessages, setLoadingMessages] = useState(false)
+  const [sendingMessage, setSendingMessage] = useState(false)
+  const [creatingAgent, setCreatingAgent] = useState(false)
+  const [deletingAgentId, setDeletingAgentId] = useState<string | null>(null)
   const [savingSettings, setSavingSettings] = useState(false)
 
-  const refreshSeconds = payload?.preferences.refreshIntervalSeconds ?? 15
-  const agentRegistry = useMemo(() => (payload ? buildAgentRegistry(payload) : []), [payload])
-  const workspaceByAgent = useMemo(
-    () => new Map(workspaceInventory.map((summary) => [summary.agentId, summary])),
-    [workspaceInventory],
-  )
+  const refreshSeconds = ops.payload?.preferences.refreshIntervalSeconds ?? 15
+  const agents = workspace?.agents ?? []
+  const tasks = workspace?.tasks ?? EMPTY_TASKS
+  const taskSummary = useMemo(() => summarizeWorkspaceTasks(tasks), [tasks])
+  const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null
+  const selectedMessages = selectedAgent ? messagesByAgent[selectedAgent.id] ?? [] : []
 
-  async function loadSession() {
+  const loadSession = useCallback(async () => {
     try {
-      const response = await fetch('/api/auth/session', {
-        cache: 'no-store',
-      })
+      const response = await fetch('/api/auth/session', { cache: 'no-store' })
       const data = (await response.json()) as SessionResponse
 
       startTransition(() => {
@@ -225,101 +275,209 @@ export default function DashboardClient() {
           loading: false,
           authenticated: data.authenticated,
           passwordRequired: data.passwordRequired,
+          oauthAvailable: data.oauthAvailable,
+          authMode: data.authMode,
+          user: data.user,
+          needsSetup: data.needsSetup,
         })
       })
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Unable to establish the Mission Control session.')
-      setSession({
+      setError(requestError instanceof Error ? requestError.message : 'Unable to load the session.')
+      setSession((current) => ({
+        ...current,
         loading: false,
         authenticated: false,
-        passwordRequired: true,
-      })
+      }))
     }
-  }
+  }, [])
 
-  async function loadOverview() {
+  const loadWorkspace = useCallback(async (agentId?: string) => {
+    const search = agentId ? `?agentId=${encodeURIComponent(agentId)}` : ''
+    const response = await fetch(`/api/workspace${search}`, { cache: 'no-store' })
+
+    if (response.status === 401) {
+      setWorkspace(null)
+      setSession((current) => ({
+        ...current,
+        authenticated: false,
+      }))
+      return null
+    }
+
+    const data = (await response.json()) as WorkspaceResponse
+
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || 'Unable to load the workspace.')
+    }
+
+    startTransition(() => {
+      setWorkspace(data)
+      setSession((current) => ({
+        ...current,
+        needsSetup: data.needsSetup,
+        user: data.user,
+        authMode: data.authMode,
+      }))
+    })
+
+    const nextMessages = data.messages.reduce<Record<string, WorkspaceMessage[]>>((accumulator, message) => {
+      accumulator[message.agentId] = [...(accumulator[message.agentId] || []), message]
+      return accumulator
+    }, {})
+
+    setMessagesByAgent((current) => ({
+      ...current,
+      ...nextMessages,
+    }))
+
+    return data
+  }, [])
+
+  const loadOps = useCallback(async () => {
+    const [response, agentFilesResponse, chatResponse] = await Promise.all([
+      fetch('/api/control-center', { cache: 'no-store' }),
+      fetch('/api/agent-files', { cache: 'no-store' }),
+      fetch('/api/chat', { cache: 'no-store' }),
+    ])
+
+    if (response.status === 401) {
+      setSession((current) => ({
+        ...current,
+        authenticated: false,
+      }))
+      return
+    }
+
+    const overview = (await response.json()) as OverviewPayload & { error?: string }
+
+    if (!response.ok) {
+      throw new Error(overview.error || 'Unable to load operations data.')
+    }
+
+    let workspaceInventory: AgentWorkspaceSummary[] = []
+    let persistedSessions: PersistedChatSession[] = []
+
+    if (agentFilesResponse.ok) {
+      const agentFiles = (await agentFilesResponse.json()) as {
+        ok: boolean
+        agents?: AgentWorkspaceSummary[]
+      }
+
+      if (agentFiles.ok && Array.isArray(agentFiles.agents)) {
+        workspaceInventory = agentFiles.agents
+      }
+    }
+
+    if (chatResponse.ok) {
+      const chatPayload = (await chatResponse.json()) as {
+        ok: boolean
+        persistedSessions?: PersistedChatSession[]
+      }
+
+      if (chatPayload.ok && Array.isArray(chatPayload.persistedSessions)) {
+        persistedSessions = chatPayload.persistedSessions
+      }
+    }
+
+    startTransition(() => {
+      setOps({
+        payload: overview,
+        workspaceInventory,
+        persistedSessions,
+      })
+      setSettings(overview.preferences)
+      setError(null)
+    })
+  }, [])
+
+  const refreshAll = useCallback(async () => {
     setRefreshing(true)
 
     try {
-      const [response, agentFilesResponse, chatResponse] = await Promise.all([
-        fetch('/api/control-center', {
-          cache: 'no-store',
-        }),
-        fetch('/api/agent-files', {
-          cache: 'no-store',
-        }),
-        fetch('/api/chat', {
-          cache: 'no-store',
-        }),
-      ])
+      const workspaceData = await loadWorkspace(selectedAgentId ?? undefined)
+      await loadOps()
 
-      if (response.status === 401) {
-        setPayload(null)
-        setWorkspaceInventory([])
-        setPersistedSessions([])
-        setSession((current) => ({
-          ...current,
-          authenticated: false,
-        }))
-        return
+      if (!selectedAgentId && workspaceData?.agents.length) {
+        const preferred = workspaceData.agents.find((agent) => agent.isCore) || workspaceData.agents[0]
+        setSelectedAgentId(preferred.id)
       }
-
-      const data = (await response.json()) as OverviewPayload & { error?: string }
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Unable to load Mission Control.')
-      }
-
-      let nextWorkspaceInventory: AgentWorkspaceSummary[] = []
-      let nextPersistedSessions: PersistedChatSession[] = []
-
-      if (agentFilesResponse.ok) {
-        const agentFiles = (await agentFilesResponse.json()) as AgentFilesResponse
-
-        if (agentFiles.ok && Array.isArray(agentFiles.agents)) {
-          nextWorkspaceInventory = agentFiles.agents
-        }
-      }
-
-      if (chatResponse.ok) {
-        const chatData = (await chatResponse.json()) as ChatResponse
-
-        if (chatData.ok && Array.isArray(chatData.persistedSessions)) {
-          nextPersistedSessions = chatData.persistedSessions
-        }
-      }
-
-      startTransition(() => {
-        setPayload(data)
-        setSettings(data.preferences)
-        setWorkspaceInventory(nextWorkspaceInventory)
-        setPersistedSessions(nextPersistedSessions)
-        setError(null)
-      })
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Unable to load Mission Control.')
+      setError(requestError instanceof Error ? requestError.message : 'Unable to refresh ClawStack.')
     } finally {
       setRefreshing(false)
     }
-  }
+  }, [loadOps, loadWorkspace, selectedAgentId])
 
   useEffect(() => {
     loadSession()
-  }, [])
+  }, [loadSession])
 
   useEffect(() => {
     if (!session.authenticated) {
       return
     }
 
-    loadOverview()
+    refreshAll()
+  }, [refreshAll, session.authenticated])
+
+  useEffect(() => {
+    if (!session.authenticated) {
+      return
+    }
 
     const intervalId = window.setInterval(() => {
-      loadOverview()
+      refreshAll()
     }, refreshSeconds * 1000)
 
     return () => window.clearInterval(intervalId)
-  }, [session.authenticated, refreshSeconds])
+  }, [refreshAll, refreshSeconds, session.authenticated])
+
+  useEffect(() => {
+    if (!selectedAgentId || !session.authenticated || !workspace || workspace.needsSetup) {
+      return
+    }
+
+    if (messagesByAgent[selectedAgentId]?.length) {
+      return
+    }
+
+    setLoadingMessages(true)
+    fetch(`/api/messages?agentId=${encodeURIComponent(selectedAgentId)}`, {
+      cache: 'no-store',
+    })
+      .then(async (response) => {
+        const data = (await response.json()) as MessagesResponse
+
+        if (!response.ok || !data.ok || !Array.isArray(data.messages)) {
+          throw new Error(data.error || 'Unable to load messages.')
+        }
+
+        setMessagesByAgent((current) => ({
+          ...current,
+          [selectedAgentId]: data.messages || [],
+        }))
+      })
+      .catch((requestError) => {
+        setChatError(requestError instanceof Error ? requestError.message : 'Unable to load messages.')
+      })
+      .finally(() => {
+        setLoadingMessages(false)
+      })
+  }, [messagesByAgent, selectedAgentId, session.authenticated, workspace])
+
+  useEffect(() => {
+    if (!workspace?.agents.length) {
+      setSelectedAgentId(null)
+      return
+    }
+
+    if (selectedAgentId && workspace.agents.some((agent) => agent.id === selectedAgentId)) {
+      return
+    }
+
+    const preferred = workspace.agents.find((agent) => agent.isCore) || workspace.agents[0]
+    setSelectedAgentId(preferred.id)
+  }, [selectedAgentId, workspace?.agents])
 
   async function handleLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -333,28 +491,76 @@ export default function DashboardClient() {
         },
         body: JSON.stringify({ password }),
       })
-      const data = (await response.json()) as { ok: boolean; error?: string }
+      const data = (await response.json()) as {
+        ok: boolean
+        error?: string
+      }
 
       if (!response.ok || !data.ok) {
-        throw new Error(data.error || 'Incorrect password.')
+        throw new Error(data.error || 'Unable to sign in.')
       }
 
       setPassword('')
       await loadSession()
     } catch (requestError) {
-      setLoginError(requestError instanceof Error ? requestError.message : 'Unable to establish the Mission Control session.')
+      setLoginError(requestError instanceof Error ? requestError.message : 'Unable to sign in.')
     }
   }
 
-  async function handleLogout() {
-    await fetch('/api/auth/logout', {
-      method: 'POST',
-    })
+  function handleGitHubLogin() {
+    window.location.href = '/api/auth/github/start'
+  }
 
-    setPayload(null)
-    setWorkspaceInventory([])
-    setPersistedSessions([])
+  async function handleLogout() {
+    await fetch('/api/auth/logout', { method: 'POST' })
+    setWorkspace(null)
+    setOps({
+      payload: null,
+      workspaceInventory: [],
+      persistedSessions: [],
+    })
+    setMessagesByAgent({})
+    setSelectedAgentId(null)
     await loadSession()
+  }
+
+  async function handleSetup(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setSetupError(null)
+    setBootstrapping(true)
+
+    try {
+      const response = await fetch('/api/setup', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          goal,
+          departments: selectedDepartments,
+        }),
+      })
+      const data = (await response.json()) as WorkspaceResponse
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || 'Unable to initialize the workspace.')
+      }
+
+      setWorkspace(data)
+      setGoal('')
+      setSetupError(null)
+      setSession((current) => ({
+        ...current,
+        needsSetup: false,
+      }))
+      const preferred = data.agents.find((agent) => agent.isCore) || data.agents[0] || null
+      setSelectedAgentId(preferred?.id || null)
+      await loadOps()
+    } catch (requestError) {
+      setSetupError(requestError instanceof Error ? requestError.message : 'Unable to initialize the workspace.')
+    } finally {
+      setBootstrapping(false)
+    }
   }
 
   async function savePreferences(nextSettings: Partial<DashboardPreferences>) {
@@ -384,7 +590,7 @@ export default function DashboardClient() {
       }
 
       setSettings(data.preferences)
-      await loadOverview()
+      await loadOps()
     } catch (requestError) {
       setSettingsError(requestError instanceof Error ? requestError.message : 'Unable to update preferences.')
     } finally {
@@ -413,6 +619,7 @@ export default function DashboardClient() {
           title: taskTitle,
           description: taskDescription,
           priority: taskPriority,
+          assignedAgentId: taskAgentId || null,
         }),
       })
       const data = (await response.json()) as { ok: boolean; error?: string }
@@ -424,7 +631,8 @@ export default function DashboardClient() {
       setTaskTitle('')
       setTaskDescription('')
       setTaskPriority('medium')
-      await loadOverview()
+      setTaskAgentId('')
+      await loadWorkspace(selectedAgentId ?? undefined)
     } catch (requestError) {
       setTaskError(requestError instanceof Error ? requestError.message : 'Unable to create the task.')
     } finally {
@@ -432,7 +640,7 @@ export default function DashboardClient() {
     }
   }
 
-  async function updateTask(task: MissionControlTask, patch: Partial<MissionControlTask>) {
+  async function updateTask(task: WorkspaceTask, patch: Partial<WorkspaceTask>) {
     setUpdatingTaskId(task.id)
     setTaskError(null)
 
@@ -446,6 +654,7 @@ export default function DashboardClient() {
           id: task.id,
           status: patch.status ?? task.status,
           priority: patch.priority ?? task.priority,
+          assignedAgentId: patch.assignedAgentId ?? task.assignedAgentId,
         }),
       })
       const data = (await response.json()) as { ok: boolean; error?: string }
@@ -454,7 +663,7 @@ export default function DashboardClient() {
         throw new Error(data.error || 'Unable to update the task.')
       }
 
-      await loadOverview()
+      await loadWorkspace(selectedAgentId ?? undefined)
     } catch (requestError) {
       setTaskError(requestError instanceof Error ? requestError.message : 'Unable to update the task.')
     } finally {
@@ -462,40 +671,226 @@ export default function DashboardClient() {
     }
   }
 
+  async function handleSendMessage(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setChatError(null)
+
+    if (!selectedAgent || !chatDraft.trim()) {
+      setChatError('Choose an agent and enter a message to continue.')
+      return
+    }
+
+    setSendingMessage(true)
+
+    try {
+      const response = await fetch('/api/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          agentId: selectedAgent.id,
+          content: chatDraft,
+        }),
+      })
+      const data = (await response.json()) as MessagesResponse
+
+      if (!response.ok || !data.ok || !Array.isArray(data.messages)) {
+        throw new Error(data.error || 'Unable to send the message.')
+      }
+
+      setMessagesByAgent((current) => ({
+        ...current,
+        [selectedAgent.id]: data.messages || [],
+      }))
+      setChatDraft('')
+      await loadWorkspace(selectedAgent.id)
+    } catch (requestError) {
+      setChatError(requestError instanceof Error ? requestError.message : 'Unable to send the message.')
+    } finally {
+      setSendingMessage(false)
+    }
+  }
+
+  async function handleCreateAgent(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    setAgentError(null)
+
+    if (!workspace?.project) {
+      setAgentError('Finish setup before adding more agents.')
+      return
+    }
+
+    if (!newAgentName.trim() || !newAgentRole.trim()) {
+      setAgentError('Name and role are required.')
+      return
+    }
+
+    setCreatingAgent(true)
+
+    try {
+      const response = await fetch('/api/agents', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          projectId: workspace.project.id,
+          department: newAgentDepartment,
+          name: newAgentName,
+          role: newAgentRole,
+        }),
+      })
+      const data = (await response.json()) as { ok: boolean; error?: string }
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || 'Unable to create the agent.')
+      }
+
+      setNewAgentName('')
+      setNewAgentRole('')
+      setNewAgentDepartment('builder')
+      await loadWorkspace(selectedAgentId ?? undefined)
+      await loadOps()
+    } catch (requestError) {
+      setAgentError(requestError instanceof Error ? requestError.message : 'Unable to create the agent.')
+    } finally {
+      setCreatingAgent(false)
+    }
+  }
+
+  async function handleDeleteAgent(agentId: string) {
+    setDeletingAgentId(agentId)
+    setAgentError(null)
+
+    try {
+      const response = await fetch(`/api/agents?agentId=${encodeURIComponent(agentId)}`, {
+        method: 'DELETE',
+      })
+      const data = (await response.json()) as { ok: boolean; error?: string }
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || 'Unable to delete the agent.')
+      }
+
+      setMessagesByAgent((current) => {
+        const next = { ...current }
+        delete next[agentId]
+        return next
+      })
+      await loadWorkspace(selectedAgentId === agentId ? undefined : selectedAgentId ?? undefined)
+      await loadOps()
+    } catch (requestError) {
+      setAgentError(requestError instanceof Error ? requestError.message : 'Unable to delete the agent.')
+    } finally {
+      setDeletingAgentId(null)
+    }
+  }
+
+  function toggleDepartment(department: Department) {
+    setSelectedDepartments((current) => (
+      current.includes(department)
+        ? current.filter((entry) => entry !== department)
+        : [...current, department]
+    ))
+  }
+
   if (session.loading) {
     return (
       <main className="auth-shell">
         <section className="auth-card">
-          <div className="eyebrow">ClawStack Admin</div>
-          <h1>Loading the admin suite</h1>
-          <p>Connecting stack telemetry, operator state, and agent data.</p>
+          <div className="eyebrow">ClawStack</div>
+          <h1>Loading the workspace</h1>
+          <p>Connecting your AI agent management platform, operational telemetry, and workspace state.</p>
         </section>
       </main>
     )
   }
 
-  if (session.passwordRequired && !session.authenticated) {
+  if (!session.authenticated) {
     return (
       <main className="auth-shell">
         <section className="auth-card">
-          <div className="eyebrow">ClawStack Admin</div>
-          <h1>Operator sign in</h1>
-          <p>Mission Control is now structured as an admin suite for agent operations. Sign in to continue.</p>
-          <form className="auth-form" onSubmit={handleLogin}>
-            <input
-              autoComplete="current-password"
-              className="field"
-              onChange={(event) => setPassword(event.target.value)}
-              placeholder="Mission Control password"
-              type="password"
-              value={password}
-            />
-            <button className="primary-button" type="submit">
-              Sign in
-            </button>
-          </form>
+          <div className="eyebrow">ClawStack</div>
+          <h1>Sign in to Mission Control</h1>
+          <p>ClawStack is a local-first AI agent management platform. Sign in to open your workspace and operator tools.</p>
+
+          {session.oauthAvailable ? (
+            <div className="auth-actions">
+              <button className="primary-button" onClick={handleGitHubLogin} type="button">
+                <Rocket size={16} />
+                Continue with GitHub
+              </button>
+            </div>
+          ) : null}
+
+          {session.passwordRequired ? (
+            <form className="auth-form" onSubmit={handleLogin}>
+              <input
+                autoComplete="current-password"
+                className="field"
+                onChange={(event) => setPassword(event.target.value)}
+                placeholder="Mission Control password"
+                type="password"
+                value={password}
+              />
+              <button className="primary-button" type="submit">
+                Sign in
+              </button>
+            </form>
+          ) : null}
+
           {loginError ? <p className="error-copy">{loginError}</p> : null}
           {error ? <p className="error-copy">{error}</p> : null}
+        </section>
+      </main>
+    )
+  }
+
+  if (session.needsSetup || workspace?.needsSetup) {
+    return (
+      <main className="auth-shell">
+        <section className="auth-card setup-card">
+          <div className="eyebrow">ClawStack</div>
+          <h1>Initialize your workspace</h1>
+          <p>Define the goal, choose the departments you want online, and ClawStack will bootstrap the first agent team and work queue.</p>
+
+          <form className="setup-form" onSubmit={handleSetup}>
+            <label className="setup-block">
+              <span className="metric-label">What are we building?</span>
+              <textarea
+                className="field text-area"
+                onChange={(event) => setGoal(event.target.value)}
+                placeholder="Example: Build a local-first AI operating system for product, engineering, and launch work."
+                rows={5}
+                value={goal}
+              />
+            </label>
+
+            <div className="setup-block">
+              <span className="metric-label">Team departments</span>
+              <div className="department-grid">
+                {DEPARTMENT_OPTIONS.map((department) => (
+                  <button
+                    className={cls('department-chip', selectedDepartments.includes(department.id) && 'department-chip-active')}
+                    key={department.id}
+                    onClick={() => toggleDepartment(department.id)}
+                    type="button"
+                  >
+                    <strong>{department.label}</strong>
+                    <small>{department.description}</small>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button className="primary-button" disabled={bootstrapping} type="submit">
+              {bootstrapping ? 'Bootstrapping workspace…' : 'Create workspace'}
+              <ChevronRight size={16} />
+            </button>
+          </form>
+
+          {setupError ? <p className="error-copy">{setupError}</p> : null}
         </section>
       </main>
     )
@@ -505,25 +900,25 @@ export default function DashboardClient() {
     <main
       className={cls(
         'admin-shell',
-        payload?.preferences.densityPreference === 'compact' && 'compact-density',
-        payload?.preferences.appearancePreference === 'light' && 'appearance-light',
-        payload?.preferences.appearancePreference === 'dark' && 'appearance-dark',
+        settings?.densityPreference === 'compact' && 'compact-density',
+        settings?.appearancePreference === 'light' && 'appearance-light',
+        settings?.appearancePreference === 'dark' && 'appearance-dark',
       )}
     >
       <aside className="admin-sidebar">
         <div>
           <div className="brand-mark">ClawStack</div>
-          <h1>Admin Panel</h1>
-          <p>Agent management framework with operational control, config visibility, and operator workflow.</p>
+          <h1>Mission Control</h1>
+          <p>Workspace orchestration for agents, tasks, conversations, and the stack that runs them.</p>
         </div>
 
         <nav className="nav-stack">
           {[
             { id: 'overview', label: 'Overview', icon: LayoutDashboard },
             { id: 'agents', label: 'Agents', icon: Bot },
-            { id: 'sessions', label: 'Sessions', icon: MessagesSquare },
+            { id: 'chat', label: 'Chat', icon: MessagesSquare },
             { id: 'tasks', label: 'Tasks', icon: ListTodo },
-            { id: 'config', label: 'Config', icon: FileCode2 },
+            { id: 'ops', label: 'Ops', icon: Server },
             { id: 'settings', label: 'Settings', icon: SlidersHorizontal },
           ].map((item) => {
             const Icon = item.icon
@@ -543,20 +938,24 @@ export default function DashboardClient() {
         </nav>
 
         <div className="sidebar-note">
-          <div className="eyebrow">Vision</div>
-          <p>ClawStack is being shaped into a Jira-class operating surface for agent systems, not just a status dashboard.</p>
+          <div className="eyebrow">Platform</div>
+          <p>ClawStack is building toward a full AI Agent Management Platform while staying local-first and operator-friendly.</p>
         </div>
       </aside>
 
       <section className="admin-main">
         <header className="topbar">
           <div>
-            <div className="eyebrow">Mission Control</div>
-            <h2>Operator workspace</h2>
-            <p>Minimal, operational, and structured around agents, queues, sessions, and persisted workspace state.</p>
+            <div className="eyebrow">Workspace</div>
+            <h2>{workspace?.workspace?.name || 'ClawStack Workspace'}</h2>
+            <p>{workspace?.workspace?.goal || 'Local-first coordination for agent teams, tasks, and runtime operations.'}</p>
           </div>
           <div className="topbar-actions">
-            <button className="secondary-button" onClick={() => loadOverview()} type="button">
+            <div className="user-badge">
+              <strong>{session.user?.name || 'Operator'}</strong>
+              <small>{session.authMode === 'github' ? `@${session.user?.login}` : 'Local operator'}</small>
+            </div>
+            <button className="secondary-button" onClick={() => refreshAll()} type="button">
               <RefreshCw size={16} className={cls(refreshing && 'spin')} />
               Refresh
             </button>
@@ -566,571 +965,660 @@ export default function DashboardClient() {
           </div>
         </header>
 
-        {payload ? (
-          <>
-            <section className="metric-strip">
-              <article className="metric-card">
-                <span className="metric-label">Healthy services</span>
-                <strong>{payload.services.filter((service) => service.status === 'healthy').length}/{payload.services.length}</strong>
+        <section className="metric-strip">
+          <article className="metric-card">
+            <span className="metric-label">Agents online</span>
+            <strong>{agents.length}</strong>
+          </article>
+          <article className="metric-card">
+            <span className="metric-label">Open tasks</span>
+            <strong>{taskSummary.open}</strong>
+          </article>
+          <article className="metric-card">
+            <span className="metric-label">Conversations</span>
+            <strong>{Object.values(messagesByAgent).reduce((sum, list) => sum + list.length, 0)}</strong>
+          </article>
+          <article className="metric-card">
+            <span className="metric-label">Healthy services</span>
+            <strong>
+              {ops.payload ? `${ops.payload.services.filter((service) => service.status === 'healthy').length}/${ops.payload.services.length}` : '…'}
+            </strong>
+          </article>
+        </section>
+
+        {error ? (
+          <section className="panel panel-alert">
+            <AlertTriangle size={16} />
+            <div>
+              <strong>Refresh problem</strong>
+              <p>{error}</p>
+            </div>
+          </section>
+        ) : null}
+
+        {activeView === 'overview' ? (
+          <div className="content-stack">
+            <ViewHeader
+              eyebrow="Overview"
+              title="Workspace posture"
+              description="A single view of the current goal, active team, task pressure, and operations health."
+            />
+
+            <section className="content-grid two-column">
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>Current project</h3>
+                  <Rocket size={16} />
+                </div>
+                <div className="list-stack">
+                  <div className="list-row">
+                    <div>
+                      <strong>{workspace?.project?.name || 'Primary Project'}</strong>
+                      <p>{workspace?.project?.description || 'The first project will evolve as the core planner refines the workspace.'}</p>
+                      <small>{workspace?.workspace?.goal || 'No workspace goal recorded.'}</small>
+                    </div>
+                    <span className="status-pill tone-slate">{agents.length} agents</span>
+                  </div>
+                </div>
               </article>
-              <article className="metric-card">
-                <span className="metric-label">Live agents</span>
-                <strong>{payload.gateway.agentCount}</strong>
-              </article>
-              <article className="metric-card">
-                <span className="metric-label">Open tasks</span>
-                <strong>{payload.tasks.summary.open}</strong>
-              </article>
-              <article className="metric-card">
-                <span className="metric-label">Persisted sessions</span>
-                <strong>{persistedSessions.length}</strong>
+
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>Execution summary</h3>
+                  <ListTodo size={16} />
+                </div>
+                <div className="metric-strip nested-strip">
+                  <article className="metric-card">
+                    <span className="metric-label">Open</span>
+                    <strong>{taskSummary.open}</strong>
+                  </article>
+                  <article className="metric-card">
+                    <span className="metric-label">In progress</span>
+                    <strong>{taskSummary.inProgress}</strong>
+                  </article>
+                  <article className="metric-card">
+                    <span className="metric-label">Blocked</span>
+                    <strong>{taskSummary.blocked}</strong>
+                  </article>
+                </div>
               </article>
             </section>
 
-            {error ? (
-              <section className="panel panel-alert">
-                <AlertTriangle size={16} />
-                <div>
-                  <strong>Refresh problem</strong>
-                  <p>{error}</p>
+            <section className="content-grid two-column">
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>Agent roster</h3>
+                  <Bot size={16} />
                 </div>
+                <div className="list-stack">
+                  {agents.map((agent) => (
+                    <div className="list-row" key={agent.id}>
+                      <div>
+                        <strong>{agent.name}</strong>
+                        <p>{agent.department} · {agent.role}</p>
+                        <small>{agent.model || 'No live model detected'} · {agent.sessions} sessions</small>
+                      </div>
+                      <span className={cls('status-pill', statusTone(agent.status))}>{agent.status}</span>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>Latest work items</h3>
+                  <CheckCircle2 size={16} />
+                </div>
+                <div className="list-stack">
+                  {tasks.slice(0, 5).map((task) => (
+                    <div className="list-row" key={task.id}>
+                      <div>
+                        <strong>{task.title}</strong>
+                        <p>{task.description || 'No additional notes recorded.'}</p>
+                        <small>{task.assignedAgentName || 'Unassigned'} · updated {formatRelativeTime(task.updatedAt)}</small>
+                      </div>
+                      <span className={cls('status-pill', statusTone(task.status))}>{prettifyTaskStatus(task.status)}</span>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </section>
+          </div>
+        ) : null}
+
+        {activeView === 'agents' ? (
+          <div className="content-stack">
+            <ViewHeader
+              eyebrow="Agents"
+              title="Team management"
+              description="Shape the agent roster, inspect live status, and extend the team for new departments or workflows."
+            />
+
+            <section className="content-grid two-column">
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>Create agent</h3>
+                  <Bot size={16} />
+                </div>
+                <form className="task-form" onSubmit={handleCreateAgent}>
+                  <div className="form-row">
+                    <select
+                      className="field"
+                      onChange={(event) => setNewAgentDepartment(event.target.value as Department)}
+                      value={newAgentDepartment}
+                    >
+                      {DEPARTMENT_OPTIONS.map((department) => (
+                        <option key={department.id} value={department.id}>
+                          {department.label}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      className="field"
+                      onChange={(event) => setNewAgentName(event.target.value)}
+                      placeholder="Agent name"
+                      value={newAgentName}
+                    />
+                  </div>
+                  <textarea
+                    className="field text-area"
+                    onChange={(event) => setNewAgentRole(event.target.value)}
+                    placeholder="Role and operating brief"
+                    rows={4}
+                    value={newAgentRole}
+                  />
+                  <button className="primary-button" disabled={creatingAgent} type="submit">
+                    {creatingAgent ? 'Creating…' : 'Add agent'}
+                  </button>
+                </form>
+                {agentError ? <p className="error-copy">{agentError}</p> : null}
+              </article>
+
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>Current roster</h3>
+                  <FolderTree size={16} />
+                </div>
+                <div className="list-stack">
+                  {agents.map((agent) => (
+                    <div className="list-row" key={agent.id}>
+                      <div>
+                        <strong>{agent.name}</strong>
+                        <p>{agent.department} · {agent.role}</p>
+                        <small>{agent.workspacePath}</small>
+                      </div>
+                      <div className="list-meta">
+                        <span className={cls('status-pill', statusTone(agent.status))}>{agent.status}</span>
+                        {!agent.isCore ? (
+                          <button
+                            className="secondary-button"
+                            disabled={deletingAgentId === agent.id}
+                            onClick={() => handleDeleteAgent(agent.id)}
+                            type="button"
+                          >
+                            {deletingAgentId === agent.id ? 'Removing…' : 'Remove'}
+                          </button>
+                        ) : (
+                          <small>Core planner</small>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            </section>
+          </div>
+        ) : null}
+
+        {activeView === 'chat' ? (
+          <div className="content-stack">
+            <ViewHeader
+              eyebrow="Chat"
+              title="Agent conversations"
+              description="Send scoped instructions to one agent at a time and keep the transcript tied to the workspace."
+            />
+
+            <section className="chat-shell">
+              <aside className="chat-sidebar panel">
+                <div className="panel-header">
+                  <h3>Available agents</h3>
+                  <MessagesSquare size={16} />
+                </div>
+                <div className="list-stack">
+                  {agents.map((agent) => (
+                    <button
+                      className={cls('chat-agent-row', selectedAgent?.id === agent.id && 'chat-agent-row-active')}
+                      key={agent.id}
+                      onClick={() => setSelectedAgentId(agent.id)}
+                      type="button"
+                    >
+                      <strong>{agent.name}</strong>
+                      <small>{agent.department} · {agent.model || 'No live model detected'}</small>
+                    </button>
+                  ))}
+                </div>
+              </aside>
+
+              <section className="panel chat-panel">
+                <div className="panel-header">
+                  <h3>{selectedAgent?.name || 'Choose an agent'}</h3>
+                  <span className={cls('status-pill', statusTone(selectedAgent?.status || 'configured'))}>
+                    {selectedAgent?.status || 'idle'}
+                  </span>
+                </div>
+
+                <div className="message-stream">
+                  {loadingMessages ? <p className="empty-copy">Loading conversation…</p> : null}
+                  {!loadingMessages && selectedMessages.length === 0 ? (
+                    <p className="empty-copy">No messages yet. Start the conversation with a concrete instruction.</p>
+                  ) : null}
+                  {selectedMessages.map((message) => (
+                    <article
+                      className={cls('message-bubble', message.role === 'user' ? 'message-bubble-user' : 'message-bubble-agent')}
+                      key={message.id}
+                    >
+                      <span className="metric-label">{message.role === 'user' ? 'You' : selectedAgent?.name || 'Agent'}</span>
+                      <p>{message.content}</p>
+                      <small>{formatRelativeTime(message.createdAt)}</small>
+                    </article>
+                  ))}
+                </div>
+
+                <form className="task-form" onSubmit={handleSendMessage}>
+                  <textarea
+                    className="field text-area"
+                    onChange={(event) => setChatDraft(event.target.value)}
+                    placeholder={selectedAgent ? `Message ${selectedAgent.name}` : 'Choose an agent to start chatting'}
+                    rows={4}
+                    value={chatDraft}
+                  />
+                  <button className="primary-button" disabled={!selectedAgent || sendingMessage} type="submit">
+                    {sendingMessage ? 'Sending…' : 'Send message'}
+                  </button>
+                </form>
+                {chatError ? <p className="error-copy">{chatError}</p> : null}
               </section>
-            ) : null}
+            </section>
+          </div>
+        ) : null}
 
-            {activeView === 'overview' ? (
-              <div className="content-stack">
-                <ViewHeader
-                  eyebrow="Overview"
-                  title="System posture"
-                  description="A clean operator summary of service health, persistent state, and remediation pressure."
-                />
+        {activeView === 'tasks' ? (
+          <div className="content-stack">
+            <ViewHeader
+              eyebrow="Tasks"
+              title="Execution board"
+              description="Track planning output, assign work to agents, and keep the next deliverables visible."
+            />
 
-                <section className="content-grid two-column">
-                  <article className="panel">
-                    <div className="panel-header">
-                      <h3>Service health</h3>
-                      <Activity size={16} />
-                    </div>
-                    <div className="list-stack">
-                      {payload.services.map((service) => (
-                        <div className="list-row" key={service.name}>
-                          <div>
-                            <strong>{service.name}</strong>
-                            <p>{service.details || 'Latest health probe succeeded.'}</p>
-                          </div>
-                          <div className="list-meta">
-                            <span className={cls('status-pill', statusTone(service.status))}>{service.status}</span>
-                            <small>{service.latency ? `${service.latency} ms` : 'n/a'}</small>
-                          </div>
-                        </div>
+            <section className="content-grid two-column">
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>Create task</h3>
+                  <ListTodo size={16} />
+                </div>
+                <form className="task-form" onSubmit={handleCreateTask}>
+                  <input
+                    className="field"
+                    onChange={(event) => setTaskTitle(event.target.value)}
+                    placeholder="Add a new task"
+                    value={taskTitle}
+                  />
+                  <textarea
+                    className="field text-area"
+                    onChange={(event) => setTaskDescription(event.target.value)}
+                    placeholder="Describe the expected outcome or handoff notes"
+                    rows={4}
+                    value={taskDescription}
+                  />
+                  <div className="form-row">
+                    <select
+                      className="field"
+                      onChange={(event) => setTaskPriority(event.target.value as TaskPriority)}
+                      value={taskPriority}
+                    >
+                      <option value="low">Low priority</option>
+                      <option value="medium">Medium priority</option>
+                      <option value="high">High priority</option>
+                    </select>
+                    <select
+                      className="field"
+                      onChange={(event) => setTaskAgentId(event.target.value)}
+                      value={taskAgentId}
+                    >
+                      <option value="">Unassigned</option>
+                      {agents.map((agent) => (
+                        <option key={agent.id} value={agent.id}>
+                          {agent.name}
+                        </option>
                       ))}
-                    </div>
-                  </article>
+                    </select>
+                  </div>
+                  <button className="primary-button" disabled={creatingTask} type="submit">
+                    {creatingTask ? 'Saving…' : 'Create task'}
+                  </button>
+                </form>
+                {taskError ? <p className="error-copy">{taskError}</p> : null}
+              </article>
 
-                  <article className="panel">
-                    <div className="panel-header">
-                      <h3>Setup issues</h3>
-                      <AlertTriangle size={16} />
-                    </div>
-                    <div className="list-stack">
-                      {payload.setupIssues.map((issue) => (
-                        <div className="list-row" key={issue.id}>
-                          <div>
-                            <strong>{issue.title}</strong>
-                            <p>{issue.details}</p>
-                            <small>{issue.action}</small>
-                          </div>
-                          <span className={cls('status-pill', statusTone(issue.severity))}>{severityLabel(issue.severity)}</span>
-                        </div>
-                      ))}
-                    </div>
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>Queue summary</h3>
+                  <Settings2 size={16} />
+                </div>
+                <div className="metric-strip nested-strip">
+                  <article className="metric-card">
+                    <span className="metric-label">Open</span>
+                    <strong>{taskSummary.open}</strong>
                   </article>
-                </section>
+                  <article className="metric-card">
+                    <span className="metric-label">Done</span>
+                    <strong>{taskSummary.done}</strong>
+                  </article>
+                  <article className="metric-card">
+                    <span className="metric-label">Blocked</span>
+                    <strong>{taskSummary.blocked}</strong>
+                  </article>
+                </div>
+              </article>
+            </section>
 
-                <section className="content-grid two-column">
-                  <article className="panel">
-                    <div className="panel-header">
-                      <h3>Persistence</h3>
-                    </div>
-                    <div className="list-stack">
-                      {payload.persistence.map((store) => (
-                        <div className="list-row" key={store.id}>
-                          <div>
-                            <strong>{store.label}</strong>
-                            <p>{store.details}</p>
-                          </div>
-                          <div className="list-meta">
-                            <span className={cls('status-pill', statusTone(store.status))}>{store.status}</span>
-                            <small>{store.mounted ? 'mounted' : 'missing'}</small>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </article>
-
-                  <article className="panel">
-                    <div className="panel-header">
-                      <h3>Config + queue snapshot</h3>
-                    </div>
-                    <dl className="detail-grid">
-                      <div>
-                        <dt>OpenClaw config</dt>
-                        <dd>{payload.openclawConfig.valid ? 'Valid JSON' : 'Needs attention'}</dd>
-                      </div>
-                      <div>
-                        <dt>Configured agents</dt>
-                        <dd>{payload.openclawConfig.configuredAgents.length}</dd>
-                      </div>
-                      <div>
-                        <dt>Sessions</dt>
-                        <dd>{payload.gateway.sessionCount}</dd>
-                      </div>
-                      <div>
-                        <dt>Persisted sessions</dt>
-                        <dd>{persistedSessions.length}</dd>
-                      </div>
-                    </dl>
-                  </article>
-                </section>
+            <section className="panel">
+              <div className="panel-header">
+                <h3>Tracked tasks</h3>
               </div>
-            ) : null}
-
-            {activeView === 'agents' ? (
-              <div className="content-stack">
-                <ViewHeader
-                  eyebrow="Agents"
-                  title="Agent registry"
-                  description="A combined management surface for configured agents, live runtime state, workspace inventory, and ownership context."
-                />
-
-                <section className="content-grid two-column">
-                  <article className="panel">
-                    <div className="panel-header">
-                      <h3>Registry</h3>
-                      <Bot size={16} />
-                    </div>
-                    <div className="list-stack">
-                      {agentRegistry.map((agent) => (
-                        <div className="list-row" key={agent.id}>
-                          <div>
-                            <strong>{agent.label}</strong>
-                            <p>{agent.id} · {agent.workspace || 'No workspace declared'}</p>
-                            <small>
-                              {agent.source}
-                              {workspaceByAgent.get(agent.id)
-                                ? ` · ${workspaceByAgent.get(agent.id)?.fileCount ?? 0} files tracked`
-                                : ' · No workspace inventory detected'}
-                            </small>
-                          </div>
-                          <div className="list-meta">
-                            <span className={cls('status-pill', statusTone(agent.status))}>{agent.status}</span>
-                            <small>{agent.model}</small>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </article>
-
-                  <article className="panel">
-                    <div className="panel-header">
-                      <h3>Workspace inventory</h3>
-                      <FolderTree size={16} />
-                    </div>
-                    <div className="list-stack">
-                      {workspaceInventory.length > 0 ? (
-                        workspaceInventory.map((summary) => (
-                          <div className="list-row" key={summary.agentId}>
-                            <div>
-                              <strong>{summary.agentId}</strong>
-                              <p>{summary.fileCount} files · {summary.modelCount} models · {summary.sessionRegistryCount} saved sessions</p>
-                              <small>{summary.files.length > 0 ? summary.files.join(', ') : 'No tracked files yet'}</small>
-                            </div>
-                            <div className="list-meta">
-                              <span className="status-pill tone-slate">{summary.modelProviderCount} providers</span>
-                              <small>{summary.updatedAt ? formatRelativeTime(summary.updatedAt) : 'Unknown'}</small>
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <p className="empty-copy">No persisted agent workspace inventory has been detected yet.</p>
-                      )}
-                    </div>
-                  </article>
-                </section>
-              </div>
-            ) : null}
-
-            {activeView === 'sessions' ? (
-              <div className="content-stack">
-                <ViewHeader
-                  eyebrow="Sessions"
-                  title="Runtime and persisted sessions"
-                  description="Review live gateway sessions alongside what has actually been written to disk for each agent."
-                />
-
-                <section className="content-grid two-column">
-                  <article className="panel">
-                    <div className="panel-header">
-                      <h3>Live gateway sessions</h3>
-                      <MessagesSquare size={16} />
-                    </div>
-                    <div className="list-stack">
-                      {payload.gateway.sessions.length > 0 ? (
-                        payload.gateway.sessions.map((sessionItem) => (
-                          <div className="list-row" key={sessionItem.sessionKey}>
-                            <div>
-                              <strong>{sessionItem.label}</strong>
-                              <p>{sessionItem.agentId} · {sessionItem.model || 'No model recorded'}</p>
-                              <small>{sessionItem.totalTokens.toLocaleString()} total tokens · {sessionItem.reasoningMode || 'standard reasoning'}</small>
-                            </div>
-                            <div className="list-meta">
-                              <span className="status-pill tone-slate">{sessionItem.contextUsagePct}% context</span>
-                              <small>{formatRelativeTime(sessionItem.updatedAt)}</small>
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <p className="empty-copy">No active sessions are currently reported by the gateway.</p>
-                      )}
-                    </div>
-                  </article>
-
-                  <article className="panel">
-                    <div className="panel-header">
-                      <h3>Persisted session registry</h3>
-                      <Database size={16} />
-                    </div>
-                    <div className="list-stack">
-                      {persistedSessions.length > 0 ? (
-                        persistedSessions.map((sessionItem) => (
-                          <div className="list-row" key={sessionItem.sessionKey}>
-                            <div>
-                              <strong>{sessionItem.sessionId || sessionItem.sessionKey}</strong>
-                              <p>{sessionItem.agentId} · {sessionItem.originLabel || 'Unknown origin'}</p>
-                              <small>{sessionItem.sessionFile || 'No session file recorded'}</small>
-                            </div>
-                            <div className="list-meta">
-                              <span className="status-pill tone-slate">{sessionItem.deliveryTarget || 'direct'}</span>
-                              <small>{formatRelativeTime(sessionItem.updatedAt)}</small>
-                            </div>
-                          </div>
-                        ))
-                      ) : (
-                        <p className="empty-copy">Mission Control has not detected any persisted session registry entries yet.</p>
-                      )}
-                    </div>
-                  </article>
-                </section>
-              </div>
-            ) : null}
-
-            {activeView === 'tasks' ? (
-              <div className="content-stack">
-                <ViewHeader
-                  eyebrow="Tasks"
-                  title="Operator work queue"
-                  description="Track operational work around agents, incidents, handoffs, and config changes directly inside the admin panel."
-                />
-
-                <section className="content-grid two-column">
-                  <article className="panel">
-                    <div className="panel-header">
-                      <h3>Create task</h3>
-                      <ListTodo size={16} />
-                    </div>
-                    <form className="task-form" onSubmit={handleCreateTask}>
-                      <input
-                        className="field"
-                        onChange={(event) => setTaskTitle(event.target.value)}
-                        placeholder="Add an operator task"
-                        value={taskTitle}
-                      />
-                      <textarea
-                        className="field text-area"
-                        onChange={(event) => setTaskDescription(event.target.value)}
-                        placeholder="Optional notes, runbook links, or remediation details"
-                        rows={4}
-                        value={taskDescription}
-                      />
-                      <div className="form-row">
+              <div className="list-stack">
+                {tasks.length > 0 ? (
+                  tasks.map((task) => (
+                    <div className="list-row task-row" key={task.id}>
+                      <div>
+                        <strong>{task.title}</strong>
+                        <p>{task.description || 'No task notes yet.'}</p>
+                        <small>{task.assignedAgentName || 'Unassigned'} · updated {formatRelativeTime(task.updatedAt)}</small>
+                      </div>
+                      <div className="task-controls">
                         <select
-                          className="field"
-                          onChange={(event) => setTaskPriority(event.target.value as TaskPriority)}
-                          value={taskPriority}
+                          className="field control-field"
+                          disabled={updatingTaskId === task.id}
+                          onChange={(event) => updateTask(task, { status: event.target.value as TaskStatus })}
+                          value={task.status}
                         >
-                          <option value="low">Low priority</option>
-                          <option value="medium">Medium priority</option>
-                          <option value="high">High priority</option>
+                          <option value="backlog">Backlog</option>
+                          <option value="in_progress">In progress</option>
+                          <option value="blocked">Blocked</option>
+                          <option value="done">Done</option>
                         </select>
-                        <button className="primary-button" disabled={creatingTask} type="submit">
-                          {creatingTask ? 'Saving…' : 'Create task'}
-                        </button>
+                        <select
+                          className="field control-field"
+                          disabled={updatingTaskId === task.id}
+                          onChange={(event) => updateTask(task, { priority: event.target.value as TaskPriority })}
+                          value={task.priority}
+                        >
+                          <option value="low">Low</option>
+                          <option value="medium">Medium</option>
+                          <option value="high">High</option>
+                        </select>
+                        <select
+                          className="field control-field"
+                          disabled={updatingTaskId === task.id}
+                          onChange={(event) => updateTask(task, { assignedAgentId: event.target.value || null })}
+                          value={task.assignedAgentId || ''}
+                        >
+                          <option value="">Unassigned</option>
+                          {agents.map((agent) => (
+                            <option key={agent.id} value={agent.id}>
+                              {agent.name}
+                            </option>
+                          ))}
+                        </select>
+                        <span className={cls('status-pill', statusTone(task.status))}>{prettifyTaskStatus(task.status)}</span>
                       </div>
-                    </form>
-                    {taskError ? <p className="error-copy">{taskError}</p> : null}
-                  </article>
-
-                  <article className="panel">
-                    <div className="panel-header">
-                      <h3>Queue summary</h3>
                     </div>
-                    <div className="metric-strip nested-strip">
-                      <article className="metric-card">
-                        <span className="metric-label">Open</span>
-                        <strong>{payload.tasks.summary.open}</strong>
-                      </article>
-                      <article className="metric-card">
-                        <span className="metric-label">Blocked</span>
-                        <strong>{payload.tasks.summary.blocked}</strong>
-                      </article>
-                      <article className="metric-card">
-                        <span className="metric-label">Done</span>
-                        <strong>{payload.tasks.summary.done}</strong>
-                      </article>
-                    </div>
-                  </article>
-                </section>
-
-                <section className="panel">
-                  <div className="panel-header">
-                    <h3>Tracked tasks</h3>
-                  </div>
-                  <div className="list-stack">
-                    {payload.tasks.recent.length > 0 ? (
-                      payload.tasks.recent.map((task) => (
-                        <div className="list-row task-row" key={task.id}>
-                          <div>
-                            <strong>{task.title}</strong>
-                            <p>{task.description || 'No task notes yet.'}</p>
-                            <small>Updated {formatRelativeTime(task.updatedAt)}</small>
-                          </div>
-                          <div className="task-controls">
-                            <select
-                              className="field control-field"
-                              disabled={updatingTaskId === task.id}
-                              onChange={(event) => updateTask(task, { status: event.target.value as TaskStatus })}
-                              value={task.status}
-                            >
-                              <option value="backlog">Backlog</option>
-                              <option value="in_progress">In progress</option>
-                              <option value="blocked">Blocked</option>
-                              <option value="done">Done</option>
-                            </select>
-                            <select
-                              className="field control-field"
-                              disabled={updatingTaskId === task.id}
-                              onChange={(event) => updateTask(task, { priority: event.target.value as TaskPriority })}
-                              value={task.priority}
-                            >
-                              <option value="low">Low</option>
-                              <option value="medium">Medium</option>
-                              <option value="high">High</option>
-                            </select>
-                            <button
-                              className="secondary-button"
-                              disabled={updatingTaskId === task.id || task.status === 'done'}
-                              onClick={() => updateTask(task, { status: 'done' })}
-                              type="button"
-                            >
-                              <CheckCircle2 size={15} />
-                              {task.status === 'done' ? 'Done' : 'Mark done'}
-                            </button>
-                            <span className={cls('status-pill', statusTone(task.status))}>{prettifyTaskStatus(task.status)}</span>
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="empty-copy">No operator tasks yet.</p>
-                    )}
-                  </div>
-                </section>
+                  ))
+                ) : (
+                  <p className="empty-copy">No tasks yet. The setup wizard and task form will populate the first backlog.</p>
+                )}
               </div>
-            ) : null}
+            </section>
+          </div>
+        ) : null}
 
-            {activeView === 'config' ? (
-              <div className="content-stack">
-                <ViewHeader
-                  eyebrow="Config"
-                  title="OpenClaw configuration surface"
-                  description="Inspect the persisted gateway config, allowed origins, version metadata, and configured agent declarations from one place."
-                />
+        {activeView === 'ops' ? (
+          <div className="content-stack">
+            <ViewHeader
+              eyebrow="Ops"
+              title="Runtime and infrastructure"
+              description="Keep ClawStack healthy by watching services, persistence, configuration, and saved session state."
+            />
 
-                <section className="content-grid two-column">
-                  <article className="panel">
-                    <div className="panel-header">
-                      <h3>Config file</h3>
-                      <FileCode2 size={16} />
+            <section className="content-grid two-column">
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>Service health</h3>
+                  <Activity size={16} />
+                </div>
+                <div className="list-stack">
+                  {ops.payload?.services.map((service) => (
+                    <div className="list-row" key={service.name}>
+                      <div>
+                        <strong>{service.name}</strong>
+                        <p>{service.details || 'Latest health probe succeeded.'}</p>
+                      </div>
+                      <div className="list-meta">
+                        <span className={cls('status-pill', statusTone(service.status))}>{service.status}</span>
+                        <small>{service.latency ? `${service.latency} ms` : 'n/a'}</small>
+                      </div>
                     </div>
-                    <dl className="detail-grid">
-                      <div>
-                        <dt>Path</dt>
-                        <dd>{payload.openclawConfig.path}</dd>
-                      </div>
-                      <div>
-                        <dt>Status</dt>
-                        <dd>{payload.openclawConfig.valid ? 'Valid JSON' : 'Needs review'}</dd>
-                      </div>
-                      <div>
-                        <dt>Version</dt>
-                        <dd>{payload.openclawConfig.lastTouchedVersion || 'Unknown'}</dd>
-                      </div>
-                      <div>
-                        <dt>Last touched</dt>
-                        <dd>{payload.openclawConfig.lastTouchedAt ? formatRelativeTime(payload.openclawConfig.lastTouchedAt) : 'Unknown'}</dd>
-                      </div>
-                    </dl>
-                  </article>
+                  ))}
+                </div>
+              </article>
 
-                  <article className="panel">
-                    <div className="panel-header">
-                      <h3>Allowed origins</h3>
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>Setup issues</h3>
+                  <AlertTriangle size={16} />
+                </div>
+                <div className="list-stack">
+                  {ops.payload?.setupIssues.map((issue) => (
+                    <div className="list-row" key={issue.id}>
+                      <div>
+                        <strong>{issue.title}</strong>
+                        <p>{issue.details}</p>
+                        <small>{issue.action}</small>
+                      </div>
+                      <span className={cls('status-pill', statusTone(issue.severity))}>{severityLabel(issue.severity)}</span>
                     </div>
-                    <div className="tag-row">
-                      {payload.openclawConfig.allowedOrigins.length > 0 ? (
-                        payload.openclawConfig.allowedOrigins.map((origin) => (
-                          <span className="tag-chip" key={origin}>
-                            {origin}
-                          </span>
-                        ))
-                      ) : (
-                        <p className="empty-copy">No control UI origins are explicitly declared.</p>
-                      )}
-                    </div>
-                  </article>
-                </section>
+                  ))}
+                </div>
+              </article>
+            </section>
 
-                <section className="panel">
-                  <div className="panel-header">
-                    <h3>Configured agents</h3>
-                  </div>
-                  <div className="list-stack">
-                    {payload.openclawConfig.configuredAgents.map((agent: OpenClawConfiguredAgent) => (
-                      <div className="list-row" key={agent.id}>
+            <section className="content-grid two-column">
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>Persistence</h3>
+                  <Server size={16} />
+                </div>
+                <div className="list-stack">
+                  {ops.payload?.persistence.map((store) => (
+                    <div className="list-row" key={store.id}>
+                      <div>
+                        <strong>{store.label}</strong>
+                        <p>{store.details}</p>
+                      </div>
+                      <div className="list-meta">
+                        <span className={cls('status-pill', statusTone(store.status))}>{store.status}</span>
+                        <small>{store.mounted ? 'mounted' : 'missing'}</small>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </article>
+
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>OpenClaw config</h3>
+                  <FileCode2 size={16} />
+                </div>
+                {ops.payload ? (
+                  <dl className="detail-grid">
+                    <div>
+                      <dt>Path</dt>
+                      <dd>{ops.payload.openclawConfig.path}</dd>
+                    </div>
+                    <div>
+                      <dt>Status</dt>
+                      <dd>{ops.payload.openclawConfig.valid ? 'Valid JSON' : 'Needs review'}</dd>
+                    </div>
+                    <div>
+                      <dt>Configured agents</dt>
+                      <dd>{ops.payload.openclawConfig.configuredAgents.length}</dd>
+                    </div>
+                    <div>
+                      <dt>Allowed origins</dt>
+                      <dd>{ops.payload.openclawConfig.allowedOrigins.length || 'None declared'}</dd>
+                    </div>
+                  </dl>
+                ) : (
+                  <p className="empty-copy">Operations data is loading…</p>
+                )}
+              </article>
+            </section>
+
+            <section className="content-grid two-column">
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>Persisted workspaces</h3>
+                  <FolderTree size={16} />
+                </div>
+                <div className="list-stack">
+                  {ops.workspaceInventory.length > 0 ? (
+                    ops.workspaceInventory.map((summary) => (
+                      <div className="list-row" key={summary.agentId}>
                         <div>
-                          <strong>{agent.identityName || agent.name}</strong>
-                          <p>{agent.id} · {agent.workspace || 'No workspace declared'}</p>
-                          <small>{agent.agentDir || 'No agentDir declared'}</small>
+                          <strong>{summary.agentId}</strong>
+                          <p>{summary.fileCount} files · {summary.modelCount} models · {summary.sessionRegistryCount} saved sessions</p>
+                          <small>{summary.rootPath}</small>
                         </div>
                         <div className="list-meta">
-                          <span className="status-pill tone-slate">{agent.identityTheme || 'No theme'}</span>
+                          <span className="status-pill tone-slate">{summary.modelProviderCount} providers</span>
+                          <small>{summary.updatedAt ? formatRelativeTime(summary.updatedAt) : 'Unknown'}</small>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                </section>
+                    ))
+                  ) : (
+                    <p className="empty-copy">No persisted agent workspace inventory has been detected yet.</p>
+                  )}
+                </div>
+              </article>
 
-                <section className="panel">
-                  <div className="panel-header">
-                    <h3>Persisted workspace map</h3>
-                  </div>
-                  <div className="list-stack">
-                    {workspaceInventory.length > 0 ? (
-                      workspaceInventory.map((summary) => (
-                        <div className="list-row" key={summary.agentId}>
-                          <div>
-                            <strong>{summary.agentId}</strong>
-                            <p>{summary.rootPath}</p>
-                            <small>{summary.files.length > 0 ? summary.files.join(', ') : 'No tracked files yet'}</small>
-                          </div>
-                          <div className="list-meta">
-                            <span className="status-pill tone-slate">{summary.fileCount} files</span>
-                            <small>{summary.updatedAt ? formatRelativeTime(summary.updatedAt) : 'Unknown'}</small>
-                          </div>
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>Persisted sessions</h3>
+                  <MessagesSquare size={16} />
+                </div>
+                <div className="list-stack">
+                  {ops.persistedSessions.length > 0 ? (
+                    ops.persistedSessions.map((sessionItem) => (
+                      <div className="list-row" key={sessionItem.sessionKey}>
+                        <div>
+                          <strong>{sessionItem.sessionId || sessionItem.sessionKey}</strong>
+                          <p>{sessionItem.agentId} · {sessionItem.originLabel || 'Unknown origin'}</p>
+                          <small>{sessionItem.sessionFile || 'No session file recorded'}</small>
                         </div>
-                      ))
-                    ) : (
-                      <p className="empty-copy">No persisted agent workspaces have been detected yet.</p>
-                    )}
-                  </div>
-                </section>
-              </div>
+                        <div className="list-meta">
+                          <span className="status-pill tone-slate">{sessionItem.deliveryTarget || 'direct'}</span>
+                          <small>{formatRelativeTime(sessionItem.updatedAt)}</small>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="empty-copy">No persisted session registry entries have been detected yet.</p>
+                  )}
+                </div>
+              </article>
+            </section>
+          </div>
+        ) : null}
+
+        {activeView === 'settings' ? (
+          <div className="content-stack">
+            <ViewHeader
+              eyebrow="Settings"
+              title="Workspace preferences"
+              description="Tune the interface density and refresh behavior while keeping Mission Control quiet and operational."
+            />
+
+            {settings ? (
+              <section className="panel">
+                <div className="settings-stack">
+                  <label className="settings-row">
+                    <span>
+                      <strong>Appearance</strong>
+                      <small>Stay with system colors or pin the workspace to light or dark.</small>
+                    </span>
+                    <select
+                      className="field control-field"
+                      disabled={savingSettings}
+                      onChange={(event) => savePreferences({ appearancePreference: event.target.value as AppearancePreference })}
+                      value={settings.appearancePreference}
+                    >
+                      <option value="system">System</option>
+                      <option value="light">Light</option>
+                      <option value="dark">Dark</option>
+                    </select>
+                  </label>
+
+                  <label className="settings-row">
+                    <span>
+                      <strong>Density</strong>
+                      <small>Choose a roomier layout or a tighter operator view.</small>
+                    </span>
+                    <select
+                      className="field control-field"
+                      disabled={savingSettings}
+                      onChange={(event) => savePreferences({ densityPreference: event.target.value as DensityPreference })}
+                      value={settings.densityPreference}
+                    >
+                      <option value="comfortable">Comfortable</option>
+                      <option value="compact">Compact</option>
+                    </select>
+                  </label>
+
+                  <label className="settings-row">
+                    <span>
+                      <strong>Auto-refresh</strong>
+                      <small>Dial the workspace toward active response or quieter monitoring.</small>
+                    </span>
+                    <select
+                      className="field control-field"
+                      disabled={savingSettings}
+                      onChange={(event) => savePreferences({ refreshIntervalSeconds: Number(event.target.value) })}
+                      value={settings.refreshIntervalSeconds}
+                    >
+                      <option value="15">15 seconds</option>
+                      <option value="30">30 seconds</option>
+                      <option value="60">60 seconds</option>
+                    </select>
+                  </label>
+
+                  <label className="settings-row checkbox-row">
+                    <span>
+                      <strong>Show completed tasks in Ops</strong>
+                      <small>Keep finished operational items visible in the diagnostics feeds.</small>
+                    </span>
+                    <input
+                      checked={settings.showCompletedTasks}
+                      disabled={savingSettings}
+                      onChange={(event) => savePreferences({ showCompletedTasks: event.target.checked })}
+                      type="checkbox"
+                    />
+                  </label>
+                </div>
+                {settingsError ? <p className="error-copy">{settingsError}</p> : null}
+              </section>
             ) : null}
-
-            {activeView === 'settings' ? (
-              <div className="content-stack">
-                <ViewHeader
-                  eyebrow="Settings"
-                  title="Admin panel preferences"
-                  description="Tune the workspace density and refresh behavior while keeping the interface quiet and operational."
-                />
-
-                {settings ? (
-                  <section className="panel">
-                    <div className="settings-stack">
-                      <label className="settings-row">
-                        <span>
-                          <strong>Appearance</strong>
-                          <small>Stay with system colors or pin the admin panel to light or dark.</small>
-                        </span>
-                        <select
-                          className="field control-field"
-                          disabled={savingSettings}
-                          onChange={(event) => savePreferences({ appearancePreference: event.target.value as AppearancePreference })}
-                          value={settings.appearancePreference}
-                        >
-                          <option value="system">System</option>
-                          <option value="light">Light</option>
-                          <option value="dark">Dark</option>
-                        </select>
-                      </label>
-
-                      <label className="settings-row">
-                        <span>
-                          <strong>Density</strong>
-                          <small>Choose a roomier layout or a tighter admin view.</small>
-                        </span>
-                        <select
-                          className="field control-field"
-                          disabled={savingSettings}
-                          onChange={(event) => savePreferences({ densityPreference: event.target.value as DensityPreference })}
-                          value={settings.densityPreference}
-                        >
-                          <option value="comfortable">Comfortable</option>
-                          <option value="compact">Compact</option>
-                        </select>
-                      </label>
-
-                      <label className="settings-row">
-                        <span>
-                          <strong>Auto-refresh</strong>
-                          <small>Dial the suite toward active response or quieter monitoring.</small>
-                        </span>
-                        <select
-                          className="field control-field"
-                          disabled={savingSettings}
-                          onChange={(event) => savePreferences({ refreshIntervalSeconds: Number(event.target.value) })}
-                          value={settings.refreshIntervalSeconds}
-                        >
-                          <option value="15">15 seconds</option>
-                          <option value="30">30 seconds</option>
-                          <option value="60">60 seconds</option>
-                        </select>
-                      </label>
-
-                      <label className="settings-row checkbox-row">
-                        <span>
-                          <strong>Show completed tasks</strong>
-                          <small>Keep finished items in the queue instead of collapsing the focus to active work only.</small>
-                        </span>
-                        <input
-                          checked={settings.showCompletedTasks}
-                          disabled={savingSettings}
-                          onChange={(event) => savePreferences({ showCompletedTasks: event.target.checked })}
-                          type="checkbox"
-                        />
-                      </label>
-                    </div>
-                    {settingsError ? <p className="error-copy">{settingsError}</p> : null}
-                  </section>
-                ) : null}
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <section className="panel">
-            <p>Loading operator data…</p>
-          </section>
-        )}
+          </div>
+        ) : null}
       </section>
     </main>
   )

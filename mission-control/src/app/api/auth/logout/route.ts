@@ -1,13 +1,16 @@
 import { NextResponse } from 'next/server'
-import { clearSessionCookie } from '@/lib/api-auth'
+import { clearOauthStateCookie, clearSessionCookie } from '@/lib/api-auth'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST() {
-  return clearSessionCookie(
-    NextResponse.json({
-      ok: true,
-      authenticated: false,
-    }),
-  )
+  const response = NextResponse.json({
+    ok: true,
+    authenticated: false,
+  })
+
+  clearSessionCookie(response)
+  clearOauthStateCookie(response)
+
+  return response
 }

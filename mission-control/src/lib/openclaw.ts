@@ -1,71 +1,9 @@
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { listGatewayAgents, listGatewaySessions } from '@/lib/gateway-client'
 import type { Agent, SessionInfo } from '@/lib/types'
 
-const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || 'ws://openclaw:18789'
-const GATEWAY_PASSWORD = process.env.OPENCLAW_GATEWAY_PASSWORD || ''
 const STACK_DATA_ROOT = process.env.STACK_DATA_ROOT?.trim() || '/stack-data'
-
-type GatewayContentPart = {
-  type?: string
-  text?: string
-}
-
-type GatewayEnvelope<T = unknown> = {
-  result?: {
-    content?: GatewayContentPart[]
-  }
-  data?: T
-  error?: string
-  usage?: Record<string, unknown>
-}
-
-type GatewayResponse<T = unknown> = GatewayEnvelope<T> & {
-  ok: boolean
-  status?: number
-}
-
-function getGatewayHttpUrl() {
-  return GATEWAY_URL.replace(/^ws/i, 'http')
-}
-
-function buildGatewayHeaders() {
-  const password = GATEWAY_PASSWORD.trim()
-
-  return {
-    'Content-Type': 'application/json',
-    ...(password ? { Authorization: `Bearer ${password}` } : {}),
-  }
-}
-
-function parseJsonSafely(value: string) {
-  if (!value) {
-    return null
-  }
-
-  try {
-    return JSON.parse(value) as unknown
-  } catch {
-    return null
-  }
-}
-
-function unwrapGatewayPayload<T>(response: GatewayResponse<T>) {
-  if (response.data) {
-    return response.data
-  }
-
-  const text = response.result?.content
-    ?.map((part) => part.text ?? '')
-    .join('\n')
-    .trim()
-
-  if (!text) {
-    return null
-  }
-
-  return (parseJsonSafely(text) ?? text) as T | string
-}
 
 function pickNumber(...values: unknown[]) {
   for (const value of values) {
@@ -288,61 +226,22 @@ function listSessionsFromFilesystem(): SessionInfo[] {
   return sessions
 }
 
-async function invokeGatewayTool<T = unknown>(tool: string, args: Record<string, unknown> = {}): Promise<GatewayResponse<T>> {
-  try {
-    const response = await fetch(`${getGatewayHttpUrl()}/tools/invoke`, {
-      method: 'POST',
-      headers: buildGatewayHeaders(),
-      body: JSON.stringify({ tool, args }),
-      signal: AbortSignal.timeout(15_000),
-      cache: 'no-store',
-    })
-
-    const rawBody = await response.text()
-    const parsedBody = parseJsonSafely(rawBody)
-    const payload = (parsedBody && typeof parsedBody === 'object' ? parsedBody : {}) as GatewayEnvelope<T>
-
-    if (!response.ok) {
-      return {
-        ok: false,
-        status: response.status,
-        error: payload.error || rawBody || `Gateway request failed with HTTP ${response.status}`,
-        ...payload,
-      }
-    }
-
-    return {
-      ok: true,
-      status: response.status,
-      ...payload,
-      ...(parsedBody && typeof parsedBody !== 'object' ? { data: parsedBody as T } : {}),
-    }
-  } catch (error) {
-    return {
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-    }
-  }
-}
-
 export async function listAgents() {
-  const response = await invokeGatewayTool('agents.list', {})
-
-  if (!response.ok) {
+  try {
+    const response = await listGatewayAgents()
+    const agents = normalizeAgentList(response)
+    return agents.length > 0 ? agents : listAgentsFromFilesystem()
+  } catch {
     return listAgentsFromFilesystem()
   }
-
-  const agents = normalizeAgentList(unwrapGatewayPayload(response))
-  return agents.length > 0 ? agents : listAgentsFromFilesystem()
 }
 
 export async function listSessions() {
-  const response = await invokeGatewayTool('sessions.list', {})
-
-  if (!response.ok) {
+  try {
+    const response = await listGatewaySessions()
+    const sessions = normalizeSessions(response)
+    return sessions.length > 0 ? sessions : listSessionsFromFilesystem()
+  } catch {
     return listSessionsFromFilesystem()
   }
-
-  const sessions = normalizeSessions(unwrapGatewayPayload(response))
-  return sessions.length > 0 ? sessions : listSessionsFromFilesystem()
 }

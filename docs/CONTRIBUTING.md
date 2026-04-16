@@ -26,6 +26,7 @@ bootstraps the default OpenClaw agent team.
 ```bash
 cd mission-control
 npm install
+npm run test
 npm run dev
 npm run lint
 npm run typecheck
@@ -73,7 +74,7 @@ clawstack/
 - Add a clear description of what changed and why
 - Test locally with `clawstack start` before opening PR
 - Use `clawstack doctor` when validating persistence and datastore wiring
-- Run `npm run lint`, `npm run typecheck`, and `npm run build` in `mission-control`
+- Run `npm run lint`, `npm run typecheck`, `npm run test`, and `npm run build` in `mission-control`
 - Follow existing code style
 
 ## Issues

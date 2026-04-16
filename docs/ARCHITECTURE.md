@@ -28,17 +28,23 @@ OpenRouter, manages agent sessions, channels, and tool execution. Config
 and workspace are persisted to bind-mounted folders in `.data/`.
 
 ### mission-control
-Next.js dashboard that reads live agent state from OpenClaw, authenticates to
-the gateway with the shared `OPENCLAW_GATEWAY_PASSWORD` env var, and persists
-dashboard-specific metadata in PostgreSQL under the `mission_control` schema. Serves on port 4000,
-proxied through nginx.
+Next.js application that serves both the ClawStack workspace UI and the
+Mission Control operator surfaces. It authenticates to OpenClaw with the shared
+`OPENCLAW_GATEWAY_PASSWORD`, supports GitHub OAuth or local password sessions,
+and persists:
+- workspace data in PostgreSQL under the `amp` schema
+- operator metadata and preferences under the `mission_control` schema
+- read-only persistence diagnostics from the bind-mounted `.data` tree
+Serves on port 4000 and is proxied through nginx.
 
 Mission Control stores:
 - Schema version and last successful boot metadata
-- Read-only stack health, persistence, and gateway diagnostics
+- Workspace, project, agent, task, and message state
+- Stack health, persistence, and gateway diagnostics
 
 Mission Control access is protected with a password-backed session cookie when
-`MC_ADMIN_PASSWORD` is configured.
+GitHub OAuth is not configured. When `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`,
+and `APP_BASE_URL` are set, GitHub OAuth becomes the primary sign-in path.
 
 ### postgres
 PostgreSQL 16. Stores structured data: agents, tasks, sessions, events.

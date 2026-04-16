@@ -5,6 +5,9 @@ export type AppearancePreference = 'system' | 'light' | 'dark'
 export type DensityPreference = 'comfortable' | 'compact'
 export type TaskStatus = 'backlog' | 'in_progress' | 'blocked' | 'done'
 export type TaskPriority = 'low' | 'medium' | 'high'
+export type AuthMode = 'github' | 'local'
+export type Department = 'core' | 'research' | 'builder' | 'designer' | 'ops' | 'qa' | 'marketing'
+export type WorkspaceMessageRole = 'user' | 'assistant' | 'system'
 
 export interface ServiceHealth {
   name: string
@@ -159,6 +162,85 @@ export interface TaskSummary {
   blocked: number
   done: number
   highPriorityOpen: number
+}
+
+export interface AuthenticatedUser {
+  id: string
+  login: string
+  name: string
+  email: string | null
+  avatarUrl: string | null
+  authMode: AuthMode
+}
+
+export interface WorkspaceSummary {
+  id: string
+  name: string
+  goal: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectSummary {
+  id: string
+  workspaceId: string
+  name: string
+  description: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export interface WorkspaceAgent {
+  id: string
+  workspaceId: string
+  projectId: string
+  openclawAgentId: string
+  name: string
+  role: string
+  department: Department
+  workspacePath: string
+  isCore: boolean
+  status: AgentStatus | 'configured'
+  model: string | null
+  sessions: number
+  updatedAt: string
+}
+
+export interface WorkspaceTask {
+  id: string
+  workspaceId: string
+  projectId: string
+  title: string
+  description: string | null
+  status: TaskStatus
+  priority: TaskPriority
+  assignedAgentId: string | null
+  assignedAgentName: string | null
+  createdAt: string
+  updatedAt: string
+  completedAt: string | null
+}
+
+export interface WorkspaceMessage {
+  id: string
+  workspaceId: string
+  projectId: string
+  agentId: string
+  sessionKey: string
+  role: WorkspaceMessageRole
+  content: string
+  createdAt: string
+}
+
+export interface WorkspaceSnapshot {
+  needsSetup: boolean
+  authMode: AuthMode
+  user: AuthenticatedUser | null
+  workspace: WorkspaceSummary | null
+  project: ProjectSummary | null
+  agents: WorkspaceAgent[]
+  tasks: WorkspaceTask[]
+  messages: WorkspaceMessage[]
 }
 
 export interface OverviewPayload {
