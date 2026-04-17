@@ -21,5 +21,7 @@ export async function GET(request: NextRequest) {
     authMode: session?.authMode ?? null,
     user: session,
     needsSetup: snapshot?.needsSetup ?? false,
+    workspaceId: snapshot?.workspace?.id ?? null,
+    projectId: snapshot?.project?.id ?? null,
   })
 }

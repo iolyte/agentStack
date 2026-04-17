@@ -9,6 +9,7 @@ import {
 } from '@/lib/gateway-client'
 import { logger } from '@/lib/logger'
 import { listAgents, listSessions } from '@/lib/openclaw'
+import { emitWorkspaceEvent } from '@/lib/workspace-events'
 import type {
   AuthMode,
   AuthenticatedUser,
@@ -16,13 +17,18 @@ import type {
   TaskPriority,
   TaskStatus,
   WorkspaceAgent,
+  WorkspaceEventEnvelope,
   WorkspaceMessage,
+  WorkspaceRun,
+  WorkspaceRunStatus,
   WorkspaceSnapshot,
   WorkspaceSummary,
+  WorkspaceTaskEvent,
+  WorkspaceTaskEventType,
   WorkspaceTask,
 } from '@/lib/types'
 
-const AMP_SCHEMA_VERSION = '1'
+const AMP_SCHEMA_VERSION = '2'
 const LOCAL_OPERATOR_ID = 'local-operator'
 const DEFAULT_WORKSPACE_NAME = 'ClawStack Workspace'
 const DEFAULT_PROJECT_NAME = 'Primary Project'
@@ -99,11 +105,62 @@ type MessageRow = {
   created_at: string
 }
 
+type RunRow = {
+  id: string
+  workspace_id: string
+  project_id: string
+  agent_id: string
+  session_key: string
+  status: WorkspaceRunStatus
+  prompt_excerpt: string | null
+  response_excerpt: string | null
+  error: string | null
+  started_at: string
+  finished_at: string | null
+  updated_at: string
+}
+
+type TaskEventRow = {
+  id: string
+  workspace_id: string
+  project_id: string
+  task_id: string
+  type: WorkspaceTaskEventType
+  actor_user_id: string | null
+  previous_status: TaskStatus | null
+  next_status: TaskStatus | null
+  previous_priority: TaskPriority | null
+  next_priority: TaskPriority | null
+  previous_assigned_agent_id: string | null
+  next_assigned_agent_id: string | null
+  created_at: string
+}
+
+type WorkspaceEventRow = {
+  id: number
+  workspace_id: string
+  type: string
+  entity_type: string
+  entity_id: string | null
+  payload: Record<string, unknown> | null
+  created_at: string
+}
+
 type PlannerTask = {
   title: string
   description: string
   priority?: TaskPriority
   assignedDepartment?: Department
+}
+
+type TaskAuditEntry = {
+  type: WorkspaceTaskEventType
+  previousStatus: TaskStatus | null
+  nextStatus: TaskStatus | null
+  previousPriority: TaskPriority | null
+  nextPriority: TaskPriority | null
+  previousAssignedAgentId: string | null
+  nextAssignedAgentId: string | null
 }
 
 const DEPARTMENT_CONFIG: Record<
@@ -215,6 +272,53 @@ function mapMessage(row: MessageRow): WorkspaceMessage {
   }
 }
 
+function mapRun(row: RunRow): WorkspaceRun {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    projectId: row.project_id,
+    agentId: row.agent_id,
+    sessionKey: row.session_key,
+    status: row.status,
+    promptExcerpt: row.prompt_excerpt,
+    responseExcerpt: row.response_excerpt,
+    error: row.error,
+    startedAt: row.started_at,
+    finishedAt: row.finished_at,
+    updatedAt: row.updated_at,
+  }
+}
+
+function mapTaskEvent(row: TaskEventRow): WorkspaceTaskEvent {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    projectId: row.project_id,
+    taskId: row.task_id,
+    type: row.type,
+    actorUserId: row.actor_user_id,
+    previousStatus: row.previous_status,
+    nextStatus: row.next_status,
+    previousPriority: row.previous_priority,
+    nextPriority: row.next_priority,
+    previousAssignedAgentId: row.previous_assigned_agent_id,
+    nextAssignedAgentId: row.next_assigned_agent_id,
+    createdAt: row.created_at,
+  }
+}
+
+function mapWorkspaceEvent(row: WorkspaceEventRow): WorkspaceEventEnvelope {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    type: row.type,
+    entityType: row.entity_type,
+    entityId: row.entity_id,
+    payload: row.payload,
+    createdAt: row.created_at,
+  }
+}
+
 function normalizeDepartments(departments: unknown[]) {
   const requested = Array.isArray(departments) ? departments : []
 
@@ -245,8 +349,67 @@ function normalizeTaskPriority(value: unknown): TaskPriority {
   return 'medium'
 }
 
+function trimExcerpt(value: string, maxLength = 280) {
+  const compact = value.replace(/\s+/g, ' ').trim()
+
+  if (compact.length <= maxLength) {
+    return compact || null
+  }
+
+  return `${compact.slice(0, maxLength - 1).trimEnd()}…`
+}
+
 function getCanonicalSessionKey(agentId: string) {
   return `agent:${agentId}:main`
+}
+
+function buildTaskAuditEntries(input: {
+  previousStatus: TaskStatus
+  nextStatus: TaskStatus
+  previousPriority: TaskPriority
+  nextPriority: TaskPriority
+  previousAssignedAgentId: string | null
+  nextAssignedAgentId: string | null
+}) {
+  const entries: TaskAuditEntry[] = []
+
+  if (input.previousStatus !== input.nextStatus) {
+    entries.push({
+      type: 'status_changed',
+      previousStatus: input.previousStatus,
+      nextStatus: input.nextStatus,
+      previousPriority: null,
+      nextPriority: null,
+      previousAssignedAgentId: null,
+      nextAssignedAgentId: null,
+    })
+  }
+
+  if (input.previousPriority !== input.nextPriority) {
+    entries.push({
+      type: 'priority_changed',
+      previousStatus: null,
+      nextStatus: null,
+      previousPriority: input.previousPriority,
+      nextPriority: input.nextPriority,
+      previousAssignedAgentId: null,
+      nextAssignedAgentId: null,
+    })
+  }
+
+  if ((input.previousAssignedAgentId ?? null) !== (input.nextAssignedAgentId ?? null)) {
+    entries.push({
+      type: 'assignment_changed',
+      previousStatus: null,
+      nextStatus: null,
+      previousPriority: null,
+      nextPriority: null,
+      previousAssignedAgentId: input.previousAssignedAgentId ?? null,
+      nextAssignedAgentId: input.nextAssignedAgentId ?? null,
+    })
+  }
+
+  return entries
 }
 
 function extractTextFromUnknown(value: unknown): string {
@@ -474,6 +637,161 @@ async function listWorkspaceMessageRows(workspaceId: string, agentId?: string) {
   return result.rows
 }
 
+async function listWorkspaceRunRows(workspaceId: string, agentId?: string) {
+  const pool = getPostgresPool()
+  const result = await pool.query<RunRow>(
+    `
+      SELECT
+        id,
+        workspace_id,
+        project_id,
+        agent_id,
+        session_key,
+        status,
+        prompt_excerpt,
+        response_excerpt,
+        error,
+        started_at,
+        finished_at,
+        updated_at
+      FROM amp.runs
+      WHERE workspace_id = $1
+        AND ($2::text IS NULL OR agent_id = $2)
+      ORDER BY updated_at DESC
+      LIMIT 50
+    `,
+    [workspaceId, agentId ?? null],
+  )
+
+  return result.rows
+}
+
+async function listWorkspaceTaskEventRows(workspaceId: string) {
+  const pool = getPostgresPool()
+  const result = await pool.query<TaskEventRow>(
+    `
+      SELECT
+        id,
+        workspace_id,
+        project_id,
+        task_id,
+        type,
+        actor_user_id,
+        previous_status,
+        next_status,
+        previous_priority,
+        next_priority,
+        previous_assigned_agent_id,
+        next_assigned_agent_id,
+        created_at
+      FROM amp.task_events
+      WHERE workspace_id = $1
+      ORDER BY created_at DESC
+      LIMIT 40
+    `,
+    [workspaceId],
+  )
+
+  return result.rows
+}
+
+async function listWorkspaceEventRowsSince(workspaceId: string, afterId?: number) {
+  const pool = getPostgresPool()
+  const result = await pool.query<WorkspaceEventRow>(
+    `
+      SELECT
+        id,
+        workspace_id,
+        type,
+        entity_type,
+        entity_id,
+        payload,
+        created_at
+      FROM amp.workspace_events
+      WHERE workspace_id = $1
+        AND ($2::bigint IS NULL OR id > $2)
+      ORDER BY id ASC
+      LIMIT 100
+    `,
+    [workspaceId, afterId ?? null],
+  )
+
+  return result.rows
+}
+
+async function getWorkspaceScopedProject(workspaceId: string, projectId: string) {
+  const pool = getPostgresPool()
+  const result = await pool.query<ProjectRow>(
+    `
+      SELECT id, workspace_id, name, description, created_at, updated_at
+      FROM amp.projects
+      WHERE id = $1
+        AND workspace_id = $2
+      LIMIT 1
+    `,
+    [projectId, workspaceId],
+  )
+
+  return result.rows[0] ?? null
+}
+
+async function getWorkspaceScopedAgent(workspaceId: string, agentId: string) {
+  const pool = getPostgresPool()
+  const result = await pool.query<AgentRow>(
+    `
+      SELECT
+        id,
+        workspace_id,
+        project_id,
+        openclaw_agent_id,
+        name,
+        role,
+        department,
+        workspace_path,
+        is_core,
+        created_at,
+        updated_at
+      FROM amp.agents
+      WHERE id = $1
+        AND workspace_id = $2
+      LIMIT 1
+    `,
+    [agentId, workspaceId],
+  )
+
+  return result.rows[0] ?? null
+}
+
+async function getWorkspaceScopedTask(workspaceId: string, taskId: string) {
+  const pool = getPostgresPool()
+  const result = await pool.query<TaskRow>(
+    `
+      SELECT
+        tasks.id,
+        tasks.workspace_id,
+        tasks.project_id,
+        tasks.title,
+        tasks.description,
+        tasks.status,
+        tasks.priority,
+        tasks.assigned_agent_id,
+        agents.name AS assigned_agent_name,
+        tasks.created_at,
+        tasks.updated_at,
+        tasks.completed_at
+      FROM amp.tasks AS tasks
+      LEFT JOIN amp.agents AS agents
+        ON agents.id = tasks.assigned_agent_id
+      WHERE tasks.id = $1
+        AND tasks.workspace_id = $2
+      LIMIT 1
+    `,
+    [taskId, workspaceId],
+  )
+
+  return result.rows[0] ?? null
+}
+
 function mergeLiveAgentState(agentRows: AgentRow[], liveAgents: Awaited<ReturnType<typeof listAgents>>, liveSessions: Awaited<ReturnType<typeof listSessions>>): WorkspaceAgent[] {
   const liveById = new Map(liveAgents.map((agent) => [agent.id, agent]))
   const sessionCountByAgent = liveSessions.reduce<Record<string, number>>((accumulator, session) => {
@@ -586,6 +904,103 @@ async function importLegacyMissionControlTasks(workspaceId: string, projectId: s
       WHERE singleton = TRUE
     `,
   )
+}
+
+async function recordWorkspaceEvent(input: {
+  workspaceId: string
+  type: string
+  entityType: string
+  entityId?: string | null
+  payload?: Record<string, unknown> | null
+}) {
+  const pool = getPostgresPool()
+  const result = await pool.query<WorkspaceEventRow>(
+    `
+      INSERT INTO amp.workspace_events (
+        workspace_id,
+        type,
+        entity_type,
+        entity_id,
+        payload
+      )
+      VALUES ($1, $2, $3, $4, $5)
+      RETURNING
+        id,
+        workspace_id,
+        type,
+        entity_type,
+        entity_id,
+        payload,
+        created_at
+    `,
+    [
+      input.workspaceId,
+      input.type,
+      input.entityType,
+      input.entityId ?? null,
+      input.payload ?? null,
+    ],
+  )
+
+  const row = result.rows[0]
+
+  if (!row) {
+    return null
+  }
+
+  const event = mapWorkspaceEvent(row)
+  emitWorkspaceEvent(event)
+  return event
+}
+
+async function recordTaskAuditEntries(input: {
+  workspaceId: string
+  projectId: string
+  taskId: string
+  actorUserId: string | null
+  entries: TaskAuditEntry[]
+}) {
+  if (input.entries.length === 0) {
+    return
+  }
+
+  const pool = getPostgresPool()
+
+  for (const entry of input.entries) {
+    await pool.query(
+      `
+        INSERT INTO amp.task_events (
+          id,
+          workspace_id,
+          project_id,
+          task_id,
+          type,
+          actor_user_id,
+          previous_status,
+          next_status,
+          previous_priority,
+          next_priority,
+          previous_assigned_agent_id,
+          next_assigned_agent_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+      `,
+      [
+        randomUUID(),
+        input.workspaceId,
+        input.projectId,
+        input.taskId,
+        entry.type,
+        input.actorUserId,
+        entry.previousStatus,
+        entry.nextStatus,
+        entry.previousPriority,
+        entry.nextPriority,
+        entry.previousAssignedAgentId,
+        entry.nextAssignedAgentId,
+      ],
+    )
+  }
 }
 
 async function createPlannerTasks(input: {
@@ -718,8 +1133,16 @@ export async function ensureAmpSchema() {
         )
       `)
       await pool.query(`
-        CREATE UNIQUE INDEX IF NOT EXISTS amp_agents_workspace_department_idx
+        DROP INDEX IF EXISTS amp_agents_workspace_department_idx
+      `)
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS amp_agents_workspace_department_lookup_idx
           ON amp.agents (workspace_id, department)
+      `)
+      await pool.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS amp_agents_single_core_idx
+          ON amp.agents (workspace_id)
+          WHERE is_core = TRUE
       `)
       await pool.query(`
         CREATE TABLE IF NOT EXISTS amp.tasks (
@@ -737,6 +1160,10 @@ export async function ensureAmpSchema() {
         )
       `)
       await pool.query(`
+        CREATE INDEX IF NOT EXISTS amp_tasks_workspace_updated_at_idx
+          ON amp.tasks (workspace_id, updated_at DESC)
+      `)
+      await pool.query(`
         CREATE TABLE IF NOT EXISTS amp.messages (
           id TEXT PRIMARY KEY,
           workspace_id TEXT NOT NULL REFERENCES amp.workspaces(id) ON DELETE CASCADE,
@@ -749,11 +1176,71 @@ export async function ensureAmpSchema() {
         )
       `)
       await pool.query(`
+        CREATE INDEX IF NOT EXISTS amp_messages_workspace_created_at_idx
+          ON amp.messages (workspace_id, created_at DESC)
+      `)
+      await pool.query(`
         CREATE TABLE IF NOT EXISTS amp.task_dependencies (
           id TEXT PRIMARY KEY,
           task_id TEXT NOT NULL REFERENCES amp.tasks(id) ON DELETE CASCADE,
           depends_on_task_id TEXT NOT NULL REFERENCES amp.tasks(id) ON DELETE CASCADE
         )
+      `)
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS amp.runs (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL REFERENCES amp.workspaces(id) ON DELETE CASCADE,
+          project_id TEXT NOT NULL REFERENCES amp.projects(id) ON DELETE CASCADE,
+          agent_id TEXT NOT NULL REFERENCES amp.agents(id) ON DELETE CASCADE,
+          session_key TEXT NOT NULL,
+          status TEXT NOT NULL,
+          prompt_excerpt TEXT,
+          response_excerpt TEXT,
+          error TEXT,
+          started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          finished_at TIMESTAMPTZ,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `)
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS amp_runs_workspace_updated_at_idx
+          ON amp.runs (workspace_id, updated_at DESC)
+      `)
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS amp.task_events (
+          id TEXT PRIMARY KEY,
+          workspace_id TEXT NOT NULL REFERENCES amp.workspaces(id) ON DELETE CASCADE,
+          project_id TEXT NOT NULL REFERENCES amp.projects(id) ON DELETE CASCADE,
+          task_id TEXT NOT NULL REFERENCES amp.tasks(id) ON DELETE CASCADE,
+          type TEXT NOT NULL,
+          actor_user_id TEXT REFERENCES amp.users(id) ON DELETE SET NULL,
+          previous_status TEXT,
+          next_status TEXT,
+          previous_priority TEXT,
+          next_priority TEXT,
+          previous_assigned_agent_id TEXT REFERENCES amp.agents(id) ON DELETE SET NULL,
+          next_assigned_agent_id TEXT REFERENCES amp.agents(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `)
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS amp_task_events_workspace_created_at_idx
+          ON amp.task_events (workspace_id, created_at DESC)
+      `)
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS amp.workspace_events (
+          id BIGSERIAL PRIMARY KEY,
+          workspace_id TEXT NOT NULL REFERENCES amp.workspaces(id) ON DELETE CASCADE,
+          type TEXT NOT NULL,
+          entity_type TEXT NOT NULL,
+          entity_id TEXT,
+          payload JSONB,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `)
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS amp_workspace_events_workspace_id_idx
+          ON amp.workspace_events (workspace_id, id DESC)
       `)
       await pool.query(
         `
@@ -866,6 +1353,8 @@ export async function getWorkspaceSnapshotForUser(session: AuthenticatedUser, op
       agents: [],
       tasks: [],
       messages: [],
+      runs: [],
+      taskEvents: [],
     } satisfies WorkspaceSnapshot
   }
 
@@ -881,13 +1370,17 @@ export async function getWorkspaceSnapshotForUser(session: AuthenticatedUser, op
       agents: [],
       tasks: [],
       messages: [],
+      runs: [],
+      taskEvents: [],
     } satisfies WorkspaceSnapshot
   }
 
-  const [agentRows, taskRows, messageRows, liveAgents, liveSessions] = await Promise.all([
+  const [agentRows, taskRows, messageRows, runRows, taskEventRows, liveAgents, liveSessions] = await Promise.all([
     listWorkspaceAgentRows(workspaceContext.workspace.id),
     listWorkspaceTaskRows(workspaceContext.workspace.id),
     listWorkspaceMessageRows(workspaceContext.workspace.id, options?.agentId),
+    listWorkspaceRunRows(workspaceContext.workspace.id, options?.agentId),
+    listWorkspaceTaskEventRows(workspaceContext.workspace.id),
     listAgents().catch(() => []),
     listSessions().catch(() => []),
   ])
@@ -901,6 +1394,8 @@ export async function getWorkspaceSnapshotForUser(session: AuthenticatedUser, op
     agents: mergeLiveAgentState(agentRows, liveAgents, liveSessions),
     tasks: taskRows.map(mapTask),
     messages: messageRows.map(mapMessage),
+    runs: runRows.map(mapRun),
+    taskEvents: taskEventRows.map(mapTaskEvent),
   } satisfies WorkspaceSnapshot
 }
 
@@ -1087,9 +1582,35 @@ export async function createWorkspaceAgentForUser(session: AuthenticatedUser, in
     throw new Error('Workspace setup has not been completed yet')
   }
 
+  const name = input.name.trim()
+  const role = input.role.trim()
+
+  if (!name) {
+    throw new Error('Agent name is required')
+  }
+
+  if (!role) {
+    throw new Error('Agent role is required')
+  }
+
+  if (input.department === 'core') {
+    throw new Error('The core planner agent is created during setup and cannot be added manually')
+  }
+
+  if (!input.projectId.trim()) {
+    throw new Error('Project id is required')
+  }
+
+  const project = await getWorkspaceScopedProject(workspaceContext.workspace.id, input.projectId.trim())
+
+  if (!project) {
+    throw new Error('Project not found in this workspace')
+  }
+
   const department = input.department
-  const openclawAgentId = `${department}-${randomUUID().slice(0, 8)}`
-  const workspacePath = `/home/node/.openclaw/workspace/${openclawAgentId}`
+  const requestedAgentId = `${department}-${randomUUID().slice(0, 8)}`
+  let openclawAgentId = requestedAgentId
+  let workspacePath = `/home/node/.openclaw/workspace/${openclawAgentId}`
 
   try {
     const created = await createGatewayAgent({
@@ -1098,9 +1619,11 @@ export async function createWorkspaceAgentForUser(session: AuthenticatedUser, in
     })
 
     if (created.agentId?.trim()) {
+      openclawAgentId = created.agentId.trim()
+      workspacePath = `/home/node/.openclaw/workspace/${openclawAgentId}`
       logger.info('Gateway agent created', {
-        requestedId: openclawAgentId,
-        actualId: created.agentId.trim(),
+        requestedId: requestedAgentId,
+        actualId: openclawAgentId,
       })
     }
   } catch (error) {
@@ -1111,6 +1634,7 @@ export async function createWorkspaceAgentForUser(session: AuthenticatedUser, in
   }
 
   const pool = getPostgresPool()
+  const agentId = randomUUID()
   await pool.query(
     `
       INSERT INTO amp.agents (
@@ -1127,16 +1651,36 @@ export async function createWorkspaceAgentForUser(session: AuthenticatedUser, in
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE)
     `,
     [
-      randomUUID(),
+      agentId,
       workspaceContext.workspace.id,
-      input.projectId,
+      project.id,
       openclawAgentId,
-      input.name.trim(),
-      input.role.trim(),
+      name,
+      role,
       department,
       workspacePath,
     ],
   )
+
+  await ensureGatewaySession(getCanonicalSessionKey(openclawAgentId), openclawAgentId, name).catch((error) => {
+    logger.warn('Gateway session bootstrap failed for created agent', {
+      error: error instanceof Error ? error.message : String(error),
+      agentId: openclawAgentId,
+    })
+  })
+
+  await recordWorkspaceEvent({
+    workspaceId: workspaceContext.workspace.id,
+    type: 'agent.created',
+    entityType: 'agent',
+    entityId: agentId,
+    payload: {
+      agentId,
+      openclawAgentId,
+      department,
+      name,
+    },
+  })
 
   return getWorkspaceSnapshotForUser(user)
 }
@@ -1186,6 +1730,9 @@ export async function updateWorkspaceAgentForUser(session: AuthenticatedUser, in
     throw new Error('Agent not found')
   }
 
+  const nextName = input.name?.trim() || current.name
+  const nextRole = input.role?.trim() || current.role
+
   await pool.query(
     `
       UPDATE amp.agents
@@ -1197,19 +1744,32 @@ export async function updateWorkspaceAgentForUser(session: AuthenticatedUser, in
     `,
     [
       current.id,
-      input.name?.trim() || current.name,
-      input.role?.trim() || current.role,
+      nextName,
+      nextRole,
     ],
   )
 
   await updateGatewayAgent({
     agentId: current.openclaw_agent_id,
-    name: current.openclaw_agent_id,
+    name: nextName,
   }).catch((error) => {
     logger.warn('Gateway agent update failed', {
       error: error instanceof Error ? error.message : String(error),
       agentId: current.openclaw_agent_id,
     })
+  })
+
+  await recordWorkspaceEvent({
+    workspaceId: workspaceContext.workspace.id,
+    type: 'agent.updated',
+    entityType: 'agent',
+    entityId: current.id,
+    payload: {
+      agentId: current.id,
+      openclawAgentId: current.openclaw_agent_id,
+      name: nextName,
+      role: nextRole,
+    },
   })
 
   return getWorkspaceSnapshotForUser(user)
@@ -1278,6 +1838,19 @@ export async function deleteWorkspaceAgentForUser(session: AuthenticatedUser, ag
     })
   })
 
+  await recordWorkspaceEvent({
+    workspaceId: workspaceContext.workspace.id,
+    type: 'agent.deleted',
+    entityType: 'agent',
+    entityId: current.id,
+    payload: {
+      agentId: current.id,
+      openclawAgentId: current.openclaw_agent_id,
+      name: current.name,
+      department: current.department,
+    },
+  })
+
   return getWorkspaceSnapshotForUser(user)
 }
 
@@ -1305,7 +1878,20 @@ export async function createWorkspaceTaskForUser(session: AuthenticatedUser, inp
     throw new Error('Task title is required')
   }
 
+  let assignedAgentId: string | null = input.assignedAgentId ?? null
+
+  if (assignedAgentId) {
+    const assignedAgent = await getWorkspaceScopedAgent(workspaceContext.workspace.id, assignedAgentId)
+
+    if (!assignedAgent) {
+      throw new Error('Assigned agent was not found in this workspace')
+    }
+
+    assignedAgentId = assignedAgent.id
+  }
+
   const pool = getPostgresPool()
+  const taskId = randomUUID()
   await pool.query(
     `
       INSERT INTO amp.tasks (
@@ -1321,15 +1907,46 @@ export async function createWorkspaceTaskForUser(session: AuthenticatedUser, inp
       VALUES ($1, $2, $3, $4, $5, $6, 'backlog', $7)
     `,
     [
-      randomUUID(),
+      taskId,
       workspaceContext.workspace.id,
       workspaceContext.project.id,
-      input.assignedAgentId ?? null,
+      assignedAgentId,
       title,
       input.description?.trim() || null,
       normalizeTaskPriority(input.priority),
     ],
   )
+
+  await recordTaskAuditEntries({
+    workspaceId: workspaceContext.workspace.id,
+    projectId: workspaceContext.project.id,
+    taskId,
+    actorUserId: user.id,
+    entries: [
+      {
+        type: 'created',
+        previousStatus: null,
+        nextStatus: 'backlog',
+        previousPriority: null,
+        nextPriority: normalizeTaskPriority(input.priority),
+        previousAssignedAgentId: null,
+        nextAssignedAgentId: assignedAgentId,
+      },
+    ],
+  })
+
+  await recordWorkspaceEvent({
+    workspaceId: workspaceContext.workspace.id,
+    type: 'task.created',
+    entityType: 'task',
+    entityId: taskId,
+    payload: {
+      taskId,
+      title,
+      priority: normalizeTaskPriority(input.priority),
+      assignedAgentId,
+    },
+  })
 
   return getWorkspaceSnapshotForUser(user)
 }
@@ -1352,6 +1969,39 @@ export async function updateWorkspaceTaskForUser(session: AuthenticatedUser, inp
     throw new Error('Workspace setup has not been completed yet')
   }
 
+  const current = await getWorkspaceScopedTask(workspaceContext.workspace.id, input.id)
+
+  if (!current) {
+    throw new Error('Task not found')
+  }
+
+  const nextStatus = normalizeTaskStatus(input.status ?? current.status)
+  const nextPriority = normalizeTaskPriority(input.priority ?? current.priority)
+  let nextAssignedAgentId = input.assignedAgentId ?? current.assigned_agent_id
+
+  if (nextAssignedAgentId) {
+    const assignedAgent = await getWorkspaceScopedAgent(workspaceContext.workspace.id, nextAssignedAgentId)
+
+    if (!assignedAgent) {
+      throw new Error('Assigned agent was not found in this workspace')
+    }
+
+    nextAssignedAgentId = assignedAgent.id
+  }
+
+  const auditEntries = buildTaskAuditEntries({
+    previousStatus: current.status,
+    nextStatus,
+    previousPriority: current.priority,
+    nextPriority,
+    previousAssignedAgentId: current.assigned_agent_id,
+    nextAssignedAgentId,
+  })
+
+  if (auditEntries.length === 0) {
+    return getWorkspaceSnapshotForUser(user)
+  }
+
   const pool = getPostgresPool()
   await pool.query(
     `
@@ -1370,12 +2020,34 @@ export async function updateWorkspaceTaskForUser(session: AuthenticatedUser, inp
     `,
     [
       input.id,
-      normalizeTaskStatus(input.status),
-      normalizeTaskPriority(input.priority),
-      input.assignedAgentId ?? null,
+      nextStatus,
+      nextPriority,
+      nextAssignedAgentId,
       workspaceContext.workspace.id,
     ],
   )
+
+  await recordTaskAuditEntries({
+    workspaceId: workspaceContext.workspace.id,
+    projectId: current.project_id,
+    taskId: current.id,
+    actorUserId: user.id,
+    entries: auditEntries,
+  })
+
+  await recordWorkspaceEvent({
+    workspaceId: workspaceContext.workspace.id,
+    type: 'task.updated',
+    entityType: 'task',
+    entityId: current.id,
+    payload: {
+      taskId: current.id,
+      status: nextStatus,
+      priority: nextPriority,
+      assignedAgentId: nextAssignedAgentId,
+      changed: auditEntries.map((entry) => entry.type),
+    },
+  })
 
   return getWorkspaceSnapshotForUser(user)
 }
@@ -1391,6 +2063,12 @@ export async function listMessagesForAgentForUser(session: AuthenticatedUser, ag
 
   if (!workspaceContext?.workspace) {
     throw new Error('Workspace setup has not been completed yet')
+  }
+
+  const agent = await getWorkspaceScopedAgent(workspaceContext.workspace.id, agentId)
+
+  if (!agent) {
+    throw new Error('Agent not found')
   }
 
   const messages = await listWorkspaceMessageRows(workspaceContext.workspace.id, agentId)
@@ -1448,6 +2126,8 @@ export async function sendMessageToAgentForUser(session: AuthenticatedUser, inpu
   }
 
   const sessionKey = getCanonicalSessionKey(agent.openclaw_agent_id)
+  const userMessageId = randomUUID()
+  const runId = randomUUID()
 
   await pool.query(
     `
@@ -1462,41 +2142,168 @@ export async function sendMessageToAgentForUser(session: AuthenticatedUser, inpu
       )
       VALUES ($1, $2, $3, $4, $5, 'user', $6)
     `,
-    [randomUUID(), workspaceContext.workspace.id, workspaceContext.project.id, agent.id, sessionKey, content],
+    [userMessageId, workspaceContext.workspace.id, workspaceContext.project.id, agent.id, sessionKey, content],
   )
-
-  const result = await sendGatewayChatMessage({
-    sessionKey,
-    agentId: agent.openclaw_agent_id,
-    message: content,
-    timeoutMs: 90_000,
-  })
-
-  const latestAssistant = [...result.history]
-    .reverse()
-    .find((entry) => extractRoleFromUnknown(entry) === 'assistant')
-  const assistantContent = extractTextFromUnknown(latestAssistant) || 'The run completed, but no assistant reply text was captured.'
 
   await pool.query(
     `
-      INSERT INTO amp.messages (
+      INSERT INTO amp.runs (
         id,
         workspace_id,
         project_id,
         agent_id,
         session_key,
-        role,
-        content
+        status,
+        prompt_excerpt
       )
-      VALUES ($1, $2, $3, $4, $5, 'assistant', $6)
+      VALUES ($1, $2, $3, $4, $5, 'running', $6)
     `,
-    [randomUUID(), workspaceContext.workspace.id, workspaceContext.project.id, agent.id, sessionKey, assistantContent],
+    [runId, workspaceContext.workspace.id, workspaceContext.project.id, agent.id, sessionKey, trimExcerpt(content)],
   )
+
+  await recordWorkspaceEvent({
+    workspaceId: workspaceContext.workspace.id,
+    type: 'message.created',
+    entityType: 'message',
+    entityId: userMessageId,
+    payload: {
+      agentId: agent.id,
+      role: 'user',
+      sessionKey,
+    },
+  })
+  await recordWorkspaceEvent({
+    workspaceId: workspaceContext.workspace.id,
+    type: 'run.updated',
+    entityType: 'run',
+    entityId: runId,
+    payload: {
+      runId,
+      agentId: agent.id,
+      status: 'running',
+      sessionKey,
+    },
+  })
+
+  try {
+    const result = await sendGatewayChatMessage({
+      sessionKey,
+      agentId: agent.openclaw_agent_id,
+      message: content,
+      timeoutMs: 90_000,
+    })
+
+    const latestAssistant = [...result.history]
+      .reverse()
+      .find((entry) => extractRoleFromUnknown(entry) === 'assistant')
+    const assistantContent = extractTextFromUnknown(latestAssistant) || 'The run completed, but no assistant reply text was captured.'
+    const assistantMessageId = randomUUID()
+
+    await pool.query(
+      `
+        INSERT INTO amp.messages (
+          id,
+          workspace_id,
+          project_id,
+          agent_id,
+          session_key,
+          role,
+          content
+        )
+        VALUES ($1, $2, $3, $4, $5, 'assistant', $6)
+      `,
+      [assistantMessageId, workspaceContext.workspace.id, workspaceContext.project.id, agent.id, sessionKey, assistantContent],
+    )
+    await pool.query(
+      `
+        UPDATE amp.runs
+        SET
+          status = 'completed',
+          response_excerpt = $2,
+          finished_at = NOW(),
+          updated_at = NOW()
+        WHERE id = $1
+      `,
+      [runId, trimExcerpt(assistantContent)],
+    )
+
+    await recordWorkspaceEvent({
+      workspaceId: workspaceContext.workspace.id,
+      type: 'message.created',
+      entityType: 'message',
+      entityId: assistantMessageId,
+      payload: {
+        agentId: agent.id,
+        role: 'assistant',
+        sessionKey,
+      },
+    })
+    await recordWorkspaceEvent({
+      workspaceId: workspaceContext.workspace.id,
+      type: 'run.updated',
+      entityType: 'run',
+      entityId: runId,
+      payload: {
+        runId,
+        agentId: agent.id,
+        status: 'completed',
+        sessionKey,
+      },
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'The gateway request failed'
+
+    await pool.query(
+      `
+        UPDATE amp.runs
+        SET
+          status = 'failed',
+          error = $2,
+          finished_at = NOW(),
+          updated_at = NOW()
+        WHERE id = $1
+      `,
+      [runId, message],
+    )
+    await recordWorkspaceEvent({
+      workspaceId: workspaceContext.workspace.id,
+      type: 'run.updated',
+      entityType: 'run',
+      entityId: runId,
+      payload: {
+        runId,
+        agentId: agent.id,
+        status: 'failed',
+        error: message,
+        sessionKey,
+      },
+    })
+
+    throw error
+  }
 
   return listMessagesForAgentForUser(user, agent.id)
 }
 
+export async function listWorkspaceEventsForUser(session: AuthenticatedUser, afterId?: number) {
+  const user = session.authMode === 'local' ? await ensureLocalOperatorUser() : await getUserById(session.id)
+
+  if (!user) {
+    throw new Error('User record is missing')
+  }
+
+  const workspaceContext = await getWorkspaceForUser(user.id)
+
+  if (!workspaceContext?.workspace) {
+    return []
+  }
+
+  const rows = await listWorkspaceEventRowsSince(workspaceContext.workspace.id, afterId)
+  return rows.map(mapWorkspaceEvent)
+}
+
 export const __testing = {
+  buildTaskAuditEntries,
   extractPlannerPayload,
   getCanonicalSessionKey,
 }

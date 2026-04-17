@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>clawstack Desktop</title>
+    <script type="module" src="/src/main.ts"></script>
+  </head>
+  <body>
+    <div class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">clawstack Desktop Beta</p>
+          <h1>Local launch control for your agent platform</h1>
+          <p class="lede">
+            Run the local ClawStack stack, package a reusable runtime, and bring a Cloudflare-backed
+            remote beta URL online without leaving the launcher.
+          </p>
+        </div>
+        <button class="button button-secondary" id="refresh" type="button">Refresh</button>
+      </header>
+
+      <main class="grid">
+        <section class="card status-card">
+          <div class="card-header">
+            <div>
+              <p class="eyebrow">Launcher</p>
+              <h2>Desktop status</h2>
+            </div>
+            <span class="pill" id="mode-pill">Loading…</span>
+          </div>
+          <dl class="status-grid" id="status-grid"></dl>
+        </section>
+
+        <section class="card actions-card">
+          <div class="card-header">
+            <div>
+              <p class="eyebrow">Local Stack</p>
+              <h2>Lifecycle controls</h2>
+            </div>
+          </div>
+          <div class="button-stack">
+            <button class="button" data-action="start" type="button">Start stack</button>
+            <button class="button button-secondary" data-action="restart" type="button">Restart stack</button>
+            <button class="button button-secondary" data-action="stop" type="button">Stop stack</button>
+            <button class="button button-secondary" data-action="openUi" type="button">Open Mission Control</button>
+            <button class="button button-secondary" data-action="openRuntimeDir" type="button">Open runtime folder</button>
+          </div>
+          <p class="hint">
+            Repo mode uses the checked-out <code>scripts/clawstack</code> helper. Runtime mode uses the packaged
+            app-local bundle and the published Mission Control image line.
+          </p>
+        </section>
+
+        <section class="card remote-card">
+          <div class="card-header">
+            <div>
+              <p class="eyebrow">Remote Access</p>
+              <h2>Cloudflare beta URL</h2>
+            </div>
+          </div>
+
+          <dl class="status-grid remote-grid" id="remote-grid"></dl>
+
+          <div class="form-grid">
+            <label class="field">
+              <span>Vault passphrase</span>
+              <input id="vault-passphrase" type="password" placeholder="Local-only passphrase for the stronghold vault" />
+            </label>
+            <label class="field">
+              <span>Tunnel name</span>
+              <input id="tunnel-name" type="text" value="clawstack-beta" />
+            </label>
+            <label class="field">
+              <span>Public hostname</span>
+              <input id="hostname" type="text" placeholder="beta.example.com" />
+            </label>
+            <label class="field">
+              <span>Allow email</span>
+              <input id="access-email" type="email" placeholder="founder@example.com" />
+            </label>
+          </div>
+
+          <div class="button-stack">
+            <button class="button" id="unlock-vault" type="button">Unlock vault</button>
+            <button class="button button-secondary" id="connect-cloudflare" type="button">Connect Cloudflare</button>
+            <button class="button button-secondary" id="create-tunnel" type="button">Create tunnel</button>
+            <button class="button button-secondary" id="start-remote" type="button">Start remote access</button>
+            <button class="button button-secondary" id="stop-remote" type="button">Stop remote access</button>
+            <button class="button button-secondary" id="open-access-guide" type="button">Open Access setup</button>
+            <button class="button button-secondary" id="confirm-access" type="button">Mark Access ready</button>
+            <button class="button button-secondary" id="clear-remote" type="button">Clear remote access</button>
+          </div>
+
+          <p class="hint">
+            ClawStack stores the Cloudflare account certificate and tunnel credentials inside a local stronghold vault.
+            The launcher only materializes temporary config files while the tunnel is running, then removes them again
+            when you stop remote access.
+          </p>
+        </section>
+
+        <section class="card terminal-card">
+          <div class="card-header">
+            <div>
+              <p class="eyebrow">Command output</p>
+              <h2>Last action</h2>
+            </div>
+          </div>
+          <pre id="output">Waiting for launcher activity…</pre>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

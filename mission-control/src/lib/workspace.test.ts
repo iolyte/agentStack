@@ -33,3 +33,31 @@ test('planner payload parsing rejects non-json replies', () => {
 test('canonical session keys are agent scoped', () => {
   assert.equal(workspaceTesting.getCanonicalSessionKey('core'), 'agent:core:main')
 })
+
+test('task audit entries capture status and assignment changes separately', () => {
+  const entries = workspaceTesting.buildTaskAuditEntries({
+    previousStatus: 'backlog',
+    nextStatus: 'in_progress',
+    previousPriority: 'medium',
+    nextPriority: 'medium',
+    previousAssignedAgentId: null,
+    nextAssignedAgentId: 'agent-1',
+  })
+
+  assert.equal(entries.length, 2)
+  assert.equal(entries[0]?.type, 'status_changed')
+  assert.equal(entries[1]?.type, 'assignment_changed')
+})
+
+test('task audit entries return empty when nothing changed', () => {
+  const entries = workspaceTesting.buildTaskAuditEntries({
+    previousStatus: 'blocked',
+    nextStatus: 'blocked',
+    previousPriority: 'high',
+    nextPriority: 'high',
+    previousAssignedAgentId: 'agent-2',
+    nextAssignedAgentId: 'agent-2',
+  })
+
+  assert.equal(entries.length, 0)
+})

@@ -1,0 +1,4 @@
+#!/bin/sh
+echo "cloudflared placeholder sidecar (x86_64-apple-darwin)"
+echo "Run the beta packaging workflow or replace this file with the official Cloudflare binary before enabling remote access."
+exit 1

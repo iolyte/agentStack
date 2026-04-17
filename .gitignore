@@ -11,4 +11,7 @@ mission-control/data/
 mission-control/*.db
 mission-control/tsconfig.tsbuildinfo
 mission-control/tsconfig.typecheck.tsbuildinfo
+desktop/node_modules/
+desktop/dist/
+desktop/src-tauri/target/
 .data/

@@ -8,6 +8,8 @@ export type TaskPriority = 'low' | 'medium' | 'high'
 export type AuthMode = 'github' | 'local'
 export type Department = 'core' | 'research' | 'builder' | 'designer' | 'ops' | 'qa' | 'marketing'
 export type WorkspaceMessageRole = 'user' | 'assistant' | 'system'
+export type WorkspaceRunStatus = 'running' | 'completed' | 'failed'
+export type WorkspaceTaskEventType = 'created' | 'status_changed' | 'priority_changed' | 'assignment_changed'
 
 export interface ServiceHealth {
   name: string
@@ -232,6 +234,47 @@ export interface WorkspaceMessage {
   createdAt: string
 }
 
+export interface WorkspaceRun {
+  id: string
+  workspaceId: string
+  projectId: string
+  agentId: string
+  sessionKey: string
+  status: WorkspaceRunStatus
+  promptExcerpt: string | null
+  responseExcerpt: string | null
+  error: string | null
+  startedAt: string
+  finishedAt: string | null
+  updatedAt: string
+}
+
+export interface WorkspaceTaskEvent {
+  id: string
+  workspaceId: string
+  projectId: string
+  taskId: string
+  type: WorkspaceTaskEventType
+  actorUserId: string | null
+  previousStatus: TaskStatus | null
+  nextStatus: TaskStatus | null
+  previousPriority: TaskPriority | null
+  nextPriority: TaskPriority | null
+  previousAssignedAgentId: string | null
+  nextAssignedAgentId: string | null
+  createdAt: string
+}
+
+export interface WorkspaceEventEnvelope {
+  id: number
+  workspaceId: string
+  type: string
+  entityType: string
+  entityId: string | null
+  payload: Record<string, unknown> | null
+  createdAt: string
+}
+
 export interface WorkspaceSnapshot {
   needsSetup: boolean
   authMode: AuthMode
@@ -241,6 +284,8 @@ export interface WorkspaceSnapshot {
   agents: WorkspaceAgent[]
   tasks: WorkspaceTask[]
   messages: WorkspaceMessage[]
+  runs: WorkspaceRun[]
+  taskEvents: WorkspaceTaskEvent[]
 }
 
 export interface OverviewPayload {

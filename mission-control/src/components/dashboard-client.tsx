@@ -1,6 +1,6 @@
 'use client'
 
-import { startTransition, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   Activity,
   AlertTriangle,
@@ -32,6 +32,7 @@ import type {
   TaskPriority,
   TaskStatus,
   WorkspaceAgent,
+  WorkspaceEventEnvelope,
   WorkspaceMessage,
   WorkspaceSnapshot,
   WorkspaceTask,
@@ -45,6 +46,8 @@ type SessionState = {
   authMode: AuthMode | null
   user: AuthenticatedUser | null
   needsSetup: boolean
+  workspaceId: string | null
+  projectId: string | null
 }
 
 type SessionResponse = {
@@ -55,6 +58,8 @@ type SessionResponse = {
   authMode: AuthMode | null
   user: AuthenticatedUser | null
   needsSetup: boolean
+  workspaceId: string | null
+  projectId: string | null
 }
 
 type WorkspaceResponse = {
@@ -92,6 +97,8 @@ const DEPARTMENT_OPTIONS: Array<{
 ]
 
 const EMPTY_TASKS: WorkspaceTask[] = []
+const EMPTY_RUNS: WorkspaceSnapshot['runs'] = []
+const EMPTY_TASK_EVENTS: WorkspaceSnapshot['taskEvents'] = []
 
 function cls(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(' ')
@@ -161,6 +168,33 @@ function prettifyTaskStatus(status: TaskStatus) {
   return status.charAt(0).toUpperCase() + status.slice(1)
 }
 
+function prettifyRunStatus(status: 'running' | 'completed' | 'failed') {
+  if (status === 'running') {
+    return 'Running'
+  }
+
+  if (status === 'failed') {
+    return 'Failed'
+  }
+
+  return 'Completed'
+}
+
+function prettifyTaskEventType(type: 'created' | 'status_changed' | 'priority_changed' | 'assignment_changed') {
+  switch (type) {
+    case 'created':
+      return 'Created'
+    case 'status_changed':
+      return 'Status changed'
+    case 'priority_changed':
+      return 'Priority changed'
+    case 'assignment_changed':
+      return 'Assignment changed'
+    default:
+      return type
+  }
+}
+
 function summarizeWorkspaceTasks(tasks: WorkspaceTask[]) {
   return tasks.reduce(
     (summary, task) => {
@@ -219,6 +253,8 @@ export default function DashboardClient() {
     authMode: null,
     user: null,
     needsSetup: false,
+    workspaceId: null,
+    projectId: null,
   })
   const [activeView, setActiveView] = useState<PanelView>('overview')
   const [workspace, setWorkspace] = useState<WorkspaceResponse | null>(null)
@@ -257,11 +293,18 @@ export default function DashboardClient() {
   const [creatingAgent, setCreatingAgent] = useState(false)
   const [deletingAgentId, setDeletingAgentId] = useState<string | null>(null)
   const [savingSettings, setSavingSettings] = useState(false)
+  const [realtimeConnected, setRealtimeConnected] = useState(false)
+  const [lastRealtimeEventAt, setLastRealtimeEventAt] = useState<string | null>(null)
+  const realtimeRefreshTimeoutRef = useRef<number | null>(null)
+  const pendingOpsRealtimeRefreshRef = useRef(false)
 
   const refreshSeconds = ops.payload?.preferences.refreshIntervalSeconds ?? 15
   const agents = workspace?.agents ?? []
   const tasks = workspace?.tasks ?? EMPTY_TASKS
+  const runs = workspace?.runs ?? EMPTY_RUNS
+  const taskEvents = workspace?.taskEvents ?? EMPTY_TASK_EVENTS
   const taskSummary = useMemo(() => summarizeWorkspaceTasks(tasks), [tasks])
+  const activeRuns = useMemo(() => runs.filter((run) => run.status === 'running'), [runs])
   const selectedAgent = agents.find((agent) => agent.id === selectedAgentId) ?? agents[0] ?? null
   const selectedMessages = selectedAgent ? messagesByAgent[selectedAgent.id] ?? [] : []
 
@@ -279,6 +322,8 @@ export default function DashboardClient() {
           authMode: data.authMode,
           user: data.user,
           needsSetup: data.needsSetup,
+          workspaceId: data.workspaceId,
+          projectId: data.projectId,
         })
       })
     } catch (requestError) {
@@ -287,6 +332,8 @@ export default function DashboardClient() {
         ...current,
         loading: false,
         authenticated: false,
+        workspaceId: null,
+        projectId: null,
       }))
     }
   }, [])
@@ -300,6 +347,8 @@ export default function DashboardClient() {
       setSession((current) => ({
         ...current,
         authenticated: false,
+        workspaceId: null,
+        projectId: null,
       }))
       return null
     }
@@ -317,6 +366,8 @@ export default function DashboardClient() {
         needsSetup: data.needsSetup,
         user: data.user,
         authMode: data.authMode,
+        workspaceId: data.workspace?.id ?? null,
+        projectId: data.project?.id ?? null,
       }))
     })
 
@@ -390,6 +441,32 @@ export default function DashboardClient() {
     })
   }, [])
 
+  const scheduleRealtimeRefresh = useCallback((includeOps: boolean) => {
+    if (includeOps) {
+      pendingOpsRealtimeRefreshRef.current = true
+    }
+
+    if (realtimeRefreshTimeoutRef.current) {
+      return
+    }
+
+    realtimeRefreshTimeoutRef.current = window.setTimeout(async () => {
+      realtimeRefreshTimeoutRef.current = null
+      const refreshOps = pendingOpsRealtimeRefreshRef.current
+      pendingOpsRealtimeRefreshRef.current = false
+
+      try {
+        await loadWorkspace(selectedAgentId ?? undefined)
+
+        if (refreshOps) {
+          await loadOps()
+        }
+      } catch (requestError) {
+        setError(requestError instanceof Error ? requestError.message : 'Unable to refresh ClawStack.')
+      }
+    }, 250)
+  }, [loadOps, loadWorkspace, selectedAgentId])
+
   const refreshAll = useCallback(async () => {
     setRefreshing(true)
 
@@ -413,6 +490,14 @@ export default function DashboardClient() {
   }, [loadSession])
 
   useEffect(() => {
+    return () => {
+      if (realtimeRefreshTimeoutRef.current) {
+        window.clearTimeout(realtimeRefreshTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  useEffect(() => {
     if (!session.authenticated) {
       return
     }
@@ -426,11 +511,57 @@ export default function DashboardClient() {
     }
 
     const intervalId = window.setInterval(() => {
+      if (realtimeConnected) {
+        loadOps().catch((requestError) => {
+          setError(requestError instanceof Error ? requestError.message : 'Unable to refresh ClawStack.')
+        })
+        return
+      }
+
       refreshAll()
     }, refreshSeconds * 1000)
 
     return () => window.clearInterval(intervalId)
-  }, [refreshAll, refreshSeconds, session.authenticated])
+  }, [loadOps, realtimeConnected, refreshAll, refreshSeconds, session.authenticated])
+
+  useEffect(() => {
+    if (!session.authenticated || !workspace?.workspace?.id || workspace.needsSetup) {
+      setRealtimeConnected(false)
+      return
+    }
+
+    const eventSource = new EventSource('/api/events')
+
+    const handleConnected = () => {
+      setRealtimeConnected(true)
+    }
+
+    const handleRealtimeEvent = (event: MessageEvent<string>) => {
+      try {
+        const payload = JSON.parse(event.data) as WorkspaceEventEnvelope
+        setLastRealtimeEventAt(payload.createdAt)
+        scheduleRealtimeRefresh(payload.entityType !== 'message')
+      } catch (requestError) {
+        setError(requestError instanceof Error ? requestError.message : 'Unable to parse the realtime update.')
+      }
+    }
+
+    const handleError = () => {
+      setRealtimeConnected(false)
+    }
+
+    eventSource.addEventListener('connected', handleConnected)
+    eventSource.addEventListener('workspace-event', handleRealtimeEvent as EventListener)
+    eventSource.onerror = handleError
+    eventSource.onopen = handleConnected
+
+    return () => {
+      eventSource.removeEventListener('connected', handleConnected)
+      eventSource.removeEventListener('workspace-event', handleRealtimeEvent as EventListener)
+      eventSource.close()
+      setRealtimeConnected(false)
+    }
+  }, [scheduleRealtimeRefresh, session.authenticated, workspace?.needsSetup, workspace?.workspace?.id])
 
   useEffect(() => {
     if (!selectedAgentId || !session.authenticated || !workspace || workspace.needsSetup) {
@@ -519,6 +650,8 @@ export default function DashboardClient() {
       workspaceInventory: [],
       persistedSessions: [],
     })
+    setRealtimeConnected(false)
+    setLastRealtimeEventAt(null)
     setMessagesByAgent({})
     setSelectedAgentId(null)
     await loadSession()
@@ -552,6 +685,8 @@ export default function DashboardClient() {
       setSession((current) => ({
         ...current,
         needsSetup: false,
+        workspaceId: data.workspace?.id ?? null,
+        projectId: data.project?.id ?? null,
       }))
       const preferred = data.agents.find((agent) => agent.isCore) || data.agents[0] || null
       setSelectedAgentId(preferred?.id || null)
@@ -955,6 +1090,10 @@ export default function DashboardClient() {
               <strong>{session.user?.name || 'Operator'}</strong>
               <small>{session.authMode === 'github' ? `@${session.user?.login}` : 'Local operator'}</small>
             </div>
+            <div className="user-badge">
+              <strong>{realtimeConnected ? 'Realtime connected' : 'Realtime offline'}</strong>
+              <small>{lastRealtimeEventAt ? `Last update ${formatRelativeTime(lastRealtimeEventAt)}` : 'Waiting for workspace events'}</small>
+            </div>
             <button className="secondary-button" onClick={() => refreshAll()} type="button">
               <RefreshCw size={16} className={cls(refreshing && 'spin')} />
               Refresh
@@ -977,6 +1116,10 @@ export default function DashboardClient() {
           <article className="metric-card">
             <span className="metric-label">Conversations</span>
             <strong>{Object.values(messagesByAgent).reduce((sum, list) => sum + list.length, 0)}</strong>
+          </article>
+          <article className="metric-card">
+            <span className="metric-label">Active runs</span>
+            <strong>{activeRuns.length}</strong>
           </article>
           <article className="metric-card">
             <span className="metric-label">Healthy services</span>
@@ -1080,6 +1223,56 @@ export default function DashboardClient() {
                       <span className={cls('status-pill', statusTone(task.status))}>{prettifyTaskStatus(task.status)}</span>
                     </div>
                   ))}
+                </div>
+              </article>
+            </section>
+
+            <section className="content-grid two-column">
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>Recent runs</h3>
+                  <MessagesSquare size={16} />
+                </div>
+                <div className="list-stack">
+                  {runs.length > 0 ? runs.slice(0, 5).map((run) => (
+                    <div className="list-row" key={run.id}>
+                      <div>
+                        <strong>{agents.find((agent) => agent.id === run.agentId)?.name || 'Agent run'}</strong>
+                        <p>{run.responseExcerpt || run.promptExcerpt || 'No run excerpts recorded yet.'}</p>
+                        <small>{formatRelativeTime(run.updatedAt)} · {run.sessionKey}</small>
+                      </div>
+                      <span className={cls('status-pill', statusTone(run.status === 'completed' ? 'healthy' : run.status === 'failed' ? 'critical' : 'active'))}>
+                        {prettifyRunStatus(run.status)}
+                      </span>
+                    </div>
+                  )) : (
+                    <p className="empty-copy">No runs have been recorded yet. Agent messages will appear here once execution starts.</p>
+                  )}
+                </div>
+              </article>
+
+              <article className="panel">
+                <div className="panel-header">
+                  <h3>Task activity</h3>
+                  <RefreshCw size={16} />
+                </div>
+                <div className="list-stack">
+                  {taskEvents.length > 0 ? taskEvents.slice(0, 6).map((taskEvent) => {
+                    const taskTitle = tasks.find((task) => task.id === taskEvent.taskId)?.title || 'Task update'
+
+                    return (
+                      <div className="list-row" key={taskEvent.id}>
+                        <div>
+                          <strong>{taskTitle}</strong>
+                          <p>{prettifyTaskEventType(taskEvent.type)}</p>
+                          <small>{formatRelativeTime(taskEvent.createdAt)}</small>
+                        </div>
+                        <span className="status-pill tone-slate">{prettifyTaskEventType(taskEvent.type)}</span>
+                      </div>
+                    )
+                  }) : (
+                    <p className="empty-copy">Task creation and status changes will be tracked here once the queue starts moving.</p>
+                  )}
                 </div>
               </article>
             </section>

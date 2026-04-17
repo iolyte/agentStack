@@ -84,6 +84,47 @@ clawstack shell <svc> # open a shell in a container
 
 ---
 
+## Desktop Beta
+
+The macOS launcher now lives in [`desktop/`](./desktop). It gives ClawStack a native
+launcher shell that can:
+
+- check Docker Desktop readiness
+- prepare a packaged runtime folder under app local data
+- start, stop, and restart the local stack
+- open Mission Control in the default browser
+- unlock a local stronghold vault for Cloudflare credentials
+- create a Cloudflare Tunnel for a beta hostname
+- guide Cloudflare Access setup before marking the remote URL ready
+
+### Run the desktop launcher in development
+
+```bash
+cd desktop
+npm install
+npm run desktop:dev
+```
+
+The desktop app prefers **repo mode** while you are developing in this checkout,
+which means it calls the existing `scripts/clawstack` helper and uses the repo's
+`.env` file and Docker Compose stack. Packaged runtime mode uses the app-local
+runtime bundle and the published `ghcr.io/iolyte/clawstack-mission-control`
+image line.
+
+If you want to test the remote access flow locally with the official Cloudflare
+binary instead of the placeholder sidecar, run:
+
+```bash
+cd desktop
+npm run desktop:prepare-sidecars
+```
+
+For local validation, `npm run desktop:build` produces the signed `.app` bundle.
+The signed + notarized `.dmg` path is reserved for the release workflow via
+`npm run desktop:build:dmg`.
+
+---
+
 ## Architecture
 
 ```
