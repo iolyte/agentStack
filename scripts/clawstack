@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════╗
 # ║           clawstack — CLI                         ║
-# ║   OpenClaw + Mission Control Docker Stack         ║
+# ║   AI team OS core stack                           ║
 # ║   github.com/iolyte/clawstack                     ║
 # ╚═══════════════════════════════════════════════════╝
 
@@ -41,7 +41,7 @@ banner() {
   echo "  ╚██████╗███████╗██║  ██║╚███╔███╔╝███████║   ██║   ██║  ██║╚██████╗██║  ██╗"
   echo "   ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝ ╚══════╝   ╚═╝   ╚═╝  ╚═╝ ╚═════╝╚═╝  ╚═╝"
   echo -e "${RESET}"
-  dim "  OpenClaw + Mission Control Docker Stack — v$VERSION by iolyte"
+  dim "  Mission Control + Control Plane + Orchestrator — v$VERSION by iolyte"
   echo ""
 }
 
@@ -277,19 +277,18 @@ cmd_start() {
   check_deps
   check_env
   ensure_mission_control_auth
-  ensure_openclaw_gateway_auth
   ensure_data_dirs
   log "Starting clawstack..."
   "${COMPOSE[@]}" up -d --build
-  bootstrap_agent_team
   echo ""
   success "clawstack is running!"
   echo ""
   say "  🖥️  Mission Control  →  ${BOLD}http://localhost${RESET}"
-  say "  🦞  OpenClaw         →  ${BOLD}http://localhost:18789${RESET}"
+  say "  🧠  Control Plane    →  ${BOLD}http://localhost:4100/health${RESET}"
+  say "  ⚙️  Orchestrator     →  ${BOLD}http://localhost:4200${RESET}"
+  say "  🦞  OpenClaw         →  ${BOLD}optional via docker compose --profile gateway up -d openclaw${RESET}"
   say "  💾  Stack data root  →  ${BOLD}${DATA_ROOT}${RESET}"
   show_mission_control_password
-  show_openclaw_gateway_password
   echo ""
 }
 
@@ -313,11 +312,10 @@ cmd_status() {
   "${COMPOSE[@]}" ps
   echo ""
 
-  # Gateway health check
-  if curl -sf http://localhost:18789/health &>/dev/null; then
-    success "OpenClaw gateway: ${GREEN}healthy${RESET}"
+  if curl -sf http://localhost:4100/health &>/dev/null; then
+    success "Control-plane:   ${GREEN}healthy${RESET}"
   else
-    warn "OpenClaw gateway: not reachable"
+    warn "Control-plane:   not reachable"
   fi
 
   # Mission Control health
@@ -448,7 +446,7 @@ cmd_help() {
   say "  ${BOLD}restart${RESET}          Restart all containers"
   say "  ${BOLD}status${RESET}           Show container status and health"
   say "  ${BOLD}logs [service]${RESET}   Tail logs (all or specific service)"
-  say "  ${BOLD}team${RESET}             Bootstrap the default AI agent team"
+  say "  ${BOLD}team${RESET}             Bootstrap the optional OpenClaw agent team"
   say "  ${BOLD}update${RESET}           Pull latest Docker images"
   say "  ${BOLD}doctor${RESET}           Inspect live stack health and persistence"
   say "  ${BOLD}reset${RESET}            Wipe bind-mounted data and start fresh"
@@ -456,12 +454,12 @@ cmd_help() {
   say "  ${BOLD}help${RESET}             Show this help"
   echo ""
   bold "Services:"
-  dim "  openclaw, mission-control, postgres, redis, qdrant, nginx"
+  dim "  mission-control, control-plane, orchestrator, postgres, redis, qdrant, nginx"
   echo ""
   bold "Examples:"
   echo "  clawstack start"
   echo "  clawstack team"
-  echo "  clawstack logs openclaw"
+  echo "  clawstack logs control-plane"
   echo "  clawstack shell postgres"
   echo ""
 }

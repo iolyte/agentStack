@@ -12,14 +12,14 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: mission-control
+        working-directory: apps/mission-control
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: mission-control/package-lock.json
+          cache-dependency-path: apps/mission-control/package-lock.json
       - run: |
           if [ -f package-lock.json ]; then
             npm ci
@@ -31,32 +31,45 @@ jobs:
       - run: npm run test
       - run: npm run build
 
-  desktop:
-    name: Desktop Validate
-    runs-on: macos-latest
+  control-plane:
+    name: Control Plane Validate
+    runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: desktop
+        working-directory: apps/control-plane
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
-      - uses: dtolnay/rust-toolchain@stable
-      - run: npm ci
-      - run: npm run desktop:prepare-sidecars
+          cache-dependency-path: apps/control-plane/package-lock.json
+      - run: npm install
+      - run: npm run typecheck
       - run: npm run build
-      - run: npm run desktop:check
-      - run: npm run desktop:build
+
+  orchestrator:
+    name: Orchestrator Validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/orchestrator
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/orchestrator/package-lock.json
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm run build
 
   docker:
     name: Docker Compose Validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Copy env
-        run: cp .env.example .env
-      - name: Validate compose
-        run: docker compose config -q
+      - run: cp .env.example .env
+      - run: docker compose config -q
+      - run: docker compose --profile gateway config -q
