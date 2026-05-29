@@ -1,8 +1,8 @@
-# clawstack — Architecture
+# agentStack — Architecture
 
 ## Overview
 
-clawstack is an open-source AI team control plane.
+agentStack is an open-source AI team control plane.
 
 - `mission-control` = UI/BFF
 - `control-plane` = source of truth

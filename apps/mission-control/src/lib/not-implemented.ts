@@ -4,7 +4,7 @@ export function notImplementedResponse() {
   return NextResponse.json(
     {
       ok: false,
-      error: 'This endpoint is not available in the current ClawStack build.',
+      error: 'This endpoint is not available in the current agentStack build.',
     },
     { status: 501 },
   )

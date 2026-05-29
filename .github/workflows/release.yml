@@ -50,7 +50,7 @@ jobs:
           VERSION="${TAG#v}"
 
           if [ -z "$TITLE" ]; then
-            TITLE="clawstack ${TAG}"
+            TITLE="agentStack ${TAG}"
           fi
 
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"

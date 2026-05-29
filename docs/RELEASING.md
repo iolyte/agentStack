@@ -1,4 +1,4 @@
-# Releasing clawstack
+# Releasing agentStack
 
 Current release flow is image-first.
 

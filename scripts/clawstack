@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ╔═══════════════════════════════════════════════════╗
-# ║           clawstack — CLI                         ║
+# ║           agentStack — CLI                        ║
 # ║   AI team OS core stack                           ║
-# ║   github.com/iolyte/clawstack                     ║
+# ║   github.com/iolyte/agentStack                    ║
 # ╚═══════════════════════════════════════════════════╝
 
 set -euo pipefail
@@ -218,7 +218,7 @@ bootstrap_agent_team() {
 
 cmd_install() {
   banner
-  bold "Installing clawstack..."
+  bold "Installing agentStack..."
   echo ""
 
   check_deps
@@ -254,15 +254,15 @@ cmd_install() {
       echo "" >> "$SHELL_PROFILE"
       echo "# clawstack" >> "$SHELL_PROFILE"
       echo "$INSTALL_LINE" >> "$SHELL_PROFILE"
-      success "Added clawstack to PATH in $SHELL_PROFILE"
+      success "Added agentStack to PATH in $SHELL_PROFILE"
       warn "Run ${BOLD}source $SHELL_PROFILE${RESET} or restart your terminal."
     else
-      dim "  clawstack already in PATH."
+      dim "  agentStack already in PATH."
     fi
   fi
 
   echo ""
-  success "clawstack installed!"
+  success "agentStack installed!"
   echo ""
   dim "  Next steps:"
   say "  1. Edit ${BOLD}.env${RESET} with your OPENROUTER_API_KEY"
@@ -278,10 +278,10 @@ cmd_start() {
   check_env
   ensure_mission_control_auth
   ensure_data_dirs
-  log "Starting clawstack..."
+  log "Starting agentStack..."
   "${COMPOSE[@]}" up -d --build
   echo ""
-  success "clawstack is running!"
+  success "agentStack is running!"
   echo ""
   say "  🖥️  Mission Control  →  ${BOLD}http://localhost${RESET}"
   say "  🧠  Control Plane    →  ${BOLD}http://localhost:4100/health${RESET}"
@@ -294,9 +294,9 @@ cmd_start() {
 
 cmd_stop() {
   check_deps
-  log "Stopping clawstack..."
+  log "Stopping agentStack..."
   "${COMPOSE[@]}" down
-  success "clawstack stopped."
+  success "agentStack stopped."
 }
 
 cmd_restart() {
@@ -307,7 +307,7 @@ cmd_restart() {
 
 cmd_status() {
   check_deps
-  bold "clawstack status:"
+  bold "agentStack status:"
   echo ""
   "${COMPOSE[@]}" ps
   echo ""
@@ -355,7 +355,7 @@ cmd_doctor() {
   postgres_user="${postgres_user:-clawstack}"
   postgres_db="${postgres_db:-clawstack}"
 
-  bold "clawstack doctor:"
+  bold "agentStack doctor:"
   echo ""
   "${COMPOSE[@]}" ps
   echo ""
@@ -419,7 +419,7 @@ cmd_reset() {
   echo -n "  Are you sure? [y/N] "
   read -r confirm
   if [[ "$confirm" =~ ^[Yy]$ ]]; then
-    log "Resetting clawstack..."
+    log "Resetting agentStack..."
     "${COMPOSE[@]}" down
     rm -rf "$DATA_ROOT"
     success "Reset complete. Run ${BOLD}clawstack start${RESET} to start fresh."

@@ -462,7 +462,7 @@ export default function DashboardClient() {
           await loadOps()
         }
       } catch (requestError) {
-        setError(requestError instanceof Error ? requestError.message : 'Unable to refresh ClawStack.')
+        setError(requestError instanceof Error ? requestError.message : 'Unable to refresh agentStack.')
       }
     }, 250)
   }, [loadOps, loadWorkspace, selectedAgentId])
@@ -479,7 +479,7 @@ export default function DashboardClient() {
         setSelectedAgentId(preferred.id)
       }
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : 'Unable to refresh ClawStack.')
+      setError(requestError instanceof Error ? requestError.message : 'Unable to refresh agentStack.')
     } finally {
       setRefreshing(false)
     }
@@ -513,7 +513,7 @@ export default function DashboardClient() {
     const intervalId = window.setInterval(() => {
       if (realtimeConnected) {
         loadOps().catch((requestError) => {
-          setError(requestError instanceof Error ? requestError.message : 'Unable to refresh ClawStack.')
+          setError(requestError instanceof Error ? requestError.message : 'Unable to refresh agentStack.')
         })
         return
       }
@@ -934,7 +934,7 @@ export default function DashboardClient() {
     return (
       <main className="auth-shell">
         <section className="auth-card">
-          <div className="eyebrow">ClawStack</div>
+          <div className="eyebrow">agentStack</div>
           <h1>Loading the workspace</h1>
           <p>Connecting your AI agent management platform, operational telemetry, and workspace state.</p>
         </section>
@@ -946,9 +946,9 @@ export default function DashboardClient() {
     return (
       <main className="auth-shell">
         <section className="auth-card">
-          <div className="eyebrow">ClawStack</div>
+          <div className="eyebrow">agentStack</div>
           <h1>Sign in to Mission Control</h1>
-          <p>ClawStack is a local-first AI agent management platform. Sign in to open your workspace and operator tools.</p>
+          <p>agentStack is a local-first AI agent management platform. Sign in to open your workspace and operator tools.</p>
 
           {session.oauthAvailable ? (
             <div className="auth-actions">
@@ -986,9 +986,9 @@ export default function DashboardClient() {
     return (
       <main className="auth-shell">
         <section className="auth-card setup-card">
-          <div className="eyebrow">ClawStack</div>
+          <div className="eyebrow">agentStack</div>
           <h1>Initialize your workspace</h1>
-          <p>Define the goal, choose the departments you want online, and ClawStack will bootstrap the first agent team and work queue.</p>
+          <p>Define the goal, choose the departments you want online, and agentStack will bootstrap the first agent team and work queue.</p>
 
           <form className="setup-form" onSubmit={handleSetup}>
             <label className="setup-block">
@@ -1042,7 +1042,7 @@ export default function DashboardClient() {
     >
       <aside className="admin-sidebar">
         <div>
-          <div className="brand-mark">ClawStack</div>
+          <div className="brand-mark">agentStack</div>
           <h1>Mission Control</h1>
           <p>Workspace orchestration for agents, tasks, conversations, and the stack that runs them.</p>
         </div>
@@ -1074,7 +1074,7 @@ export default function DashboardClient() {
 
         <div className="sidebar-note">
           <div className="eyebrow">Platform</div>
-          <p>ClawStack is building toward a full AI Agent Management Platform while staying local-first and operator-friendly.</p>
+          <p>agentStack is building toward a full AI Agent Management Platform while staying local-first and operator-friendly.</p>
         </div>
       </aside>
 
@@ -1082,7 +1082,7 @@ export default function DashboardClient() {
         <header className="topbar">
           <div>
             <div className="eyebrow">Workspace</div>
-            <h2>{workspace?.workspace?.name || 'ClawStack Workspace'}</h2>
+            <h2>{workspace?.workspace?.name || 'agentStack Workspace'}</h2>
             <p>{workspace?.workspace?.goal || 'Local-first coordination for agent teams, tasks, and runtime operations.'}</p>
           </div>
           <div className="topbar-actions">
@@ -1580,7 +1580,7 @@ export default function DashboardClient() {
             <ViewHeader
               eyebrow="Ops"
               title="Runtime and infrastructure"
-              description="Keep ClawStack healthy by watching services, persistence, configuration, and saved session state."
+              description="Keep agentStack healthy by watching services, persistence, configuration, and saved session state."
             />
 
             <section className="content-grid two-column">

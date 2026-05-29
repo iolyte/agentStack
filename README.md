@@ -1,4 +1,4 @@
-# 🦞 clawstack
+# 🦞 agentStack
 
 Open-source AI team control plane for software work.
 
@@ -18,8 +18,8 @@ Open-source AI team control plane for software work.
 ## Quickstart
 
 ```bash
-git clone https://github.com/iolyte/clawstack.git
-cd clawstack
+git clone https://github.com/iolyte/agentStack.git
+cd agentStack
 ./scripts/clawstack install
 cp .env.example .env
 clawstack start

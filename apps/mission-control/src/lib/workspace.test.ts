@@ -6,7 +6,7 @@ test('planner payload parsing accepts fenced json', () => {
   const payload = workspaceTesting.extractPlannerPayload(`
 \`\`\`json
 {
-  "projectSummary": "Launch the first ClawStack workspace.",
+  "projectSummary": "Launch the first agentStack workspace.",
   "tasks": [
     {
       "title": "Research the implementation surface",
@@ -19,7 +19,7 @@ test('planner payload parsing accepts fenced json', () => {
 \`\`\`
 `)
 
-  assert.equal(payload?.projectSummary, 'Launch the first ClawStack workspace.')
+  assert.equal(payload?.projectSummary, 'Launch the first agentStack workspace.')
   assert.equal(payload?.tasks.length, 1)
   assert.equal(payload?.tasks[0]?.assignedDepartment, 'research')
 })

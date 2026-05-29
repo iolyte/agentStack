@@ -48,7 +48,7 @@ export async function PUT(request: NextRequest) {
         2,
       ),
       current.hash,
-      'Update ClawStack control UI allowed origins',
+      'Update agentStack control UI allowed origins',
     )
 
     return NextResponse.json({

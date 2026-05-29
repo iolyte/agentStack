@@ -1,10 +1,10 @@
-# Contributing to clawstack
+# Contributing to agentStack
 
 ## Local dev
 
 ```bash
-git clone https://github.com/iolyte/clawstack.git
-cd clawstack
+git clone https://github.com/iolyte/agentStack.git
+cd agentStack
 cp .env.example .env
 ./scripts/clawstack start
 ```

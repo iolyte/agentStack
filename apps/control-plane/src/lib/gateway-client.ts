@@ -5,7 +5,7 @@ import { logger } from '@/lib/logger'
 const GATEWAY_URL = process.env.OPENCLAW_GATEWAY_URL || 'ws://openclaw:18789'
 const GATEWAY_PASSWORD = process.env.OPENCLAW_GATEWAY_PASSWORD?.trim() || ''
 const PROTOCOL_VERSION = 3
-const CLIENT_NAME = 'clawstack-mission-control'
+const CLIENT_NAME = 'agentStack-mission-control'
 
 type GatewayEventFrame = {
   type: 'event'

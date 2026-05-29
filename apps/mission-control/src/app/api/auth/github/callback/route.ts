@@ -95,7 +95,7 @@ export async function GET(request: NextRequest) {
       Accept: 'application/vnd.github+json',
       Authorization: `Bearer ${tokenPayload.access_token}`,
       'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': 'clawstack-mission-control',
+      'User-Agent': 'agentStack-mission-control',
     },
   })
 
@@ -112,7 +112,7 @@ export async function GET(request: NextRequest) {
         Accept: 'application/vnd.github+json',
         Authorization: `Bearer ${tokenPayload.access_token}`,
         'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': 'clawstack-mission-control',
+        'User-Agent': 'agentStack-mission-control',
       },
     })
 
