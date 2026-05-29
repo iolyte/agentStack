@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { appendSessionCookie, getImplicitLocalSession, isGitHubOAuthEnabled, isPasswordAuthEnabled, verifyPassword } from '@/lib/api-auth'
-import { ensureLocalOperatorUser } from '@/lib/workspace'
+import { postControlPlaneInternalJson } from '@/lib/control-plane'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,7 +16,7 @@ export async function POST(request: NextRequest) {
   }
 
   if (!isPasswordAuthEnabled()) {
-    await ensureLocalOperatorUser()
+    await postControlPlaneInternalJson('/auth/local')
 
     return NextResponse.json({
       ok: true,
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: false, error: 'Incorrect password.' }, { status: 401 })
   }
 
-  await ensureLocalOperatorUser()
+  await postControlPlaneInternalJson('/auth/local')
 
   return appendSessionCookie(
     NextResponse.json({

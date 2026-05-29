@@ -29,7 +29,7 @@ services:
       start_period: 20s
 
   mission-control:
-    image: ${AGENTSTACK_MISSION_CONTROL_IMAGE:-${CLAWSTACK_MISSION_CONTROL_IMAGE}}
+    image: ${AGENTSTACK_MISSION_CONTROL_IMAGE}
     container_name: agentstack-mission-control
     restart: unless-stopped
     networks: [agentstack_net]

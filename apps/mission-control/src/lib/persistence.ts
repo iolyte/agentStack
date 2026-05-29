@@ -11,7 +11,7 @@ import type {
 } from '@/lib/types'
 
 const CONTAINER_STACK_DATA_ROOT = process.env.STACK_DATA_ROOT?.trim() || '/stack-data'
-const HOST_STACK_DATA_ROOT = process.env.HOST_STACK_DATA_ROOT?.trim() || '/Users/harshitpatel/clawstack/.data'
+const HOST_STACK_DATA_ROOT = process.env.HOST_STACK_DATA_ROOT?.trim() || '/Users/harshitpatel/agentStack/.data'
 const OPENCLAW_EXPECTED_FILES = ['openclaw.json', 'tasks/runs.sqlite']
 
 type DirectorySnapshot = {

@@ -17,6 +17,7 @@ import {
   sendMessageToAgentForUser,
   updateWorkspaceAgentForUser,
   updateWorkspaceTaskForUser,
+  upsertGitHubUser,
 } from '@/lib/workspace'
 import type {
   AuthenticatedUser,
@@ -29,7 +30,6 @@ import type {
 
 const PORT = Number.parseInt(process.env.PORT?.trim() || '4100', 10)
 const INTERNAL_TOKEN = process.env.AGENTSTACK_INTERNAL_TOKEN?.trim()
-  || process.env.CLAWSTACK_INTERNAL_TOKEN?.trim()
   || process.env.MC_SESSION_SECRET?.trim()
   || 'agentstack-internal'
 
@@ -76,7 +76,7 @@ function sendJson(response: ServerResponse, status: number, body: unknown) {
 }
 
 function getInternalToken(request: IncomingMessage) {
-  const value = request.headers['x-agentstack-internal-token'] ?? request.headers['x-clawstack-internal-token']
+  const value = request.headers['x-agentstack-internal-token']
   return Array.isArray(value) ? value[0] : value
 }
 
@@ -85,7 +85,7 @@ function getSession(request: IncomingMessage): AuthenticatedUser | null {
     return null
   }
 
-  const rawHeader = request.headers['x-agentstack-user'] ?? request.headers['x-clawstack-user']
+  const rawHeader = request.headers['x-agentstack-user']
   const encoded = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader
 
   if (!encoded) {
@@ -189,6 +189,47 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
   if (url.pathname === '/health') {
     await ensureAmpSchema()
     sendJson(response, 200, { ok: true, service: 'control-plane' })
+    return
+  }
+
+  if (url.pathname === '/auth/local' && request.method === 'POST') {
+    if (getInternalToken(request) !== INTERNAL_TOKEN) {
+      sendJson(response, 401, { ok: false, error: 'Unauthorized' })
+      return
+    }
+
+    const user = await ensureLocalOperatorUser()
+    sendJson(response, 200, { ok: true, user })
+    return
+  }
+
+  if (url.pathname === '/auth/github-user' && request.method === 'POST') {
+    if (getInternalToken(request) !== INTERNAL_TOKEN) {
+      sendJson(response, 401, { ok: false, error: 'Unauthorized' })
+      return
+    }
+
+    const body = await readJson<{
+      githubId?: string
+      login?: string
+      name?: string
+      email?: string | null
+      avatarUrl?: string | null
+    }>(request)
+
+    if (!body.githubId?.trim() || !body.login?.trim()) {
+      sendJson(response, 400, { ok: false, error: 'githubId and login are required' })
+      return
+    }
+
+    const user = await upsertGitHubUser({
+      githubId: body.githubId.trim(),
+      login: body.login.trim(),
+      name: body.name?.trim() || body.login.trim(),
+      email: body.email ?? null,
+      avatarUrl: body.avatarUrl ?? null,
+    })
+    sendJson(response, 200, { ok: true, user })
     return
   }
 

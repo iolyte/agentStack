@@ -127,7 +127,7 @@ fn detect_repo_root() -> Option<PathBuf> {
         .canonicalize()
         .ok()?;
 
-    if candidate.join("scripts/agentstack").exists() || candidate.join("scripts/clawstack").exists() {
+    if candidate.join("scripts/agentstack").exists() {
         Some(candidate)
     } else {
         None

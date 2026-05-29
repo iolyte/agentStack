@@ -2,8 +2,8 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import type { AuthMode, AuthenticatedUser } from '@/lib/types'
 
-const SESSION_COOKIE_NAME = 'mission-control-session'
-const OAUTH_STATE_COOKIE_NAME = 'mission-control-oauth-state'
+const SESSION_COOKIE_NAME = 'agentstack-session'
+const OAUTH_STATE_COOKIE_NAME = 'agentstack-oauth-state'
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7
 const OAUTH_STATE_TTL_MS = 1000 * 60 * 10
 const LOCAL_OPERATOR_ID = 'local-operator'

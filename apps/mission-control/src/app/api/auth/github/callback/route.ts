@@ -5,7 +5,8 @@ import {
   isGitHubOAuthEnabled,
   verifyOauthState,
 } from '@/lib/api-auth'
-import { upsertGitHubUser } from '@/lib/workspace'
+import { postControlPlaneInternalJson } from '@/lib/control-plane'
+import type { AuthenticatedUser } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -124,7 +125,7 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const user = await upsertGitHubUser({
+  const { user } = await postControlPlaneInternalJson<{ ok: true; user: AuthenticatedUser }>('/auth/github-user', {
     githubId: String(userPayload.id),
     login: userPayload.login,
     name: userPayload.name?.trim() || userPayload.login,

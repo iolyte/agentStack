@@ -3,7 +3,6 @@ import type { AuthenticatedUser } from '@/lib/types'
 
 const CONTROL_PLANE_URL = process.env.CONTROL_PLANE_URL?.trim() || 'http://control-plane:4100'
 const INTERNAL_TOKEN = process.env.AGENTSTACK_INTERNAL_TOKEN?.trim()
-  || process.env.CLAWSTACK_INTERNAL_TOKEN?.trim()
   || process.env.MC_SESSION_SECRET?.trim()
   || 'agentstack-internal'
 
@@ -59,6 +58,24 @@ export async function getControlPlaneJson<T>(pathname: string, session: Authenti
 
   const response = await fetch(url, {
     headers: buildHeaders(session),
+    cache: 'no-store',
+  })
+
+  if (!response.ok) {
+    throw new Error(`Control-plane request failed: ${response.status}`)
+  }
+
+  return response.json() as Promise<T>
+}
+
+export async function postControlPlaneInternalJson<T>(pathname: string, body?: unknown) {
+  const response = await fetch(new URL(pathname, CONTROL_PLANE_URL), {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-agentstack-internal-token': INTERNAL_TOKEN,
+    },
+    body: JSON.stringify(body ?? {}),
     cache: 'no-store',
   })
 
