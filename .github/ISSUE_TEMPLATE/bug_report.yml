@@ -1,5 +1,5 @@
 name: Bug report
-description: Report a reproducible defect in clawstack.
+description: Report a reproducible defect in agentStack.
 title: "[Bug]: "
 labels: ["bug"]
 body:
@@ -41,4 +41,4 @@ body:
     id: logs
     attributes:
       label: Logs or screenshots
-      description: Paste relevant output from `clawstack status`, container logs, or screenshots.
+      description: Paste relevant output from `agentstack status`, container logs, or screenshots.

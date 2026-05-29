@@ -1,15 +1,15 @@
 networks:
-  clawnet:
+  agentstack_net:
     driver: bridge
 
 services:
 
-  # ─── OpenClaw Gateway ───────────────────────────────────────────
   openclaw:
     image: ghcr.io/openclaw/openclaw:latest
     container_name: openclaw
     restart: unless-stopped
-    networks: [clawnet]
+    profiles: ["gateway"]
+    networks: [agentstack_net]
     ports:
       - "${OPENCLAW_PORT:-18789}:18789"
     volumes:
@@ -30,14 +30,13 @@ services:
       retries: 3
       start_period: 20s
 
-  # ─── Mission Control Dashboard ──────────────────────────────────
   mission-control:
     build:
-      context: ./mission-control
+      context: ./apps/mission-control
       dockerfile: Dockerfile
     container_name: mission-control
     restart: unless-stopped
-    networks: [clawnet]
+    networks: [agentstack_net]
     ports:
       - "${MC_PORT:-4000}:4000"
     volumes:
@@ -45,8 +44,8 @@ services:
     environment:
       HOSTNAME: 0.0.0.0
       PORT: 4000
-      OPENCLAW_GATEWAY_URL: ws://openclaw:18789
-      OPENCLAW_GATEWAY_PASSWORD: ${OPENCLAW_GATEWAY_PASSWORD:-}
+      CONTROL_PLANE_URL: http://control-plane:4100
+      AGENTSTACK_INTERNAL_TOKEN: ${AGENTSTACK_INTERNAL_TOKEN:-${MC_SESSION_SECRET:-agentstack-internal}}
       MC_ADMIN_PASSWORD: ${MC_ADMIN_PASSWORD:-}
       MC_PASSWORD: ${MC_PASSWORD:-}
       MC_SESSION_SECRET: ${MC_SESSION_SECRET:-}
@@ -56,9 +55,9 @@ services:
       QDRANT_URL: http://qdrant:6333
       NGINX_URL: http://nginx
       STACK_DATA_ROOT: /stack-data
-      MISSION_CONTROL_BUILD: phase1
+      MISSION_CONTROL_BUILD: architecture-reset
     depends_on:
-      openclaw:
+      control-plane:
         condition: service_healthy
       postgres:
         condition: service_healthy
@@ -73,31 +72,88 @@ services:
       retries: 5
       start_period: 20s
 
-  # ─── PostgreSQL ──────────────────────────────────────────────────
+  control-plane:
+    build:
+      context: ./apps/control-plane
+      dockerfile: Dockerfile
+    container_name: control-plane
+    restart: unless-stopped
+    networks: [agentstack_net]
+    ports:
+      - "${CONTROL_PLANE_PORT:-4100}:4100"
+    volumes:
+      - ./.data:/stack-data:ro
+    environment:
+      PORT: 4100
+      POSTGRES_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_URL: redis://redis:6379
+      QDRANT_URL: http://qdrant:6333
+      OPENCLAW_GATEWAY_URL: ws://openclaw:18789
+      OPENCLAW_GATEWAY_PASSWORD: ${OPENCLAW_GATEWAY_PASSWORD:-}
+      STACK_DATA_ROOT: /stack-data
+      AGENTSTACK_INTERNAL_TOKEN: ${AGENTSTACK_INTERNAL_TOKEN:-${MC_SESSION_SECRET:-agentstack-internal}}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4100/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  orchestrator:
+    build:
+      context: ./apps/orchestrator
+      dockerfile: Dockerfile
+    container_name: orchestrator
+    restart: unless-stopped
+    networks: [agentstack_net]
+    ports:
+      - "${ORCHESTRATOR_PORT:-4200}:4200"
+    environment:
+      REDIS_URL: redis://redis:6379
+      CONTROL_PLANE_URL: http://control-plane:4100
+      ORCHESTRATOR_PORT: 4200
+    depends_on:
+      control-plane:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4200').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
   postgres:
     image: postgres:16-alpine
     container_name: postgres
     restart: unless-stopped
-    networks: [clawnet]
+    networks: [agentstack_net]
     volumes:
       - ./.data/postgres:/var/lib/postgresql/data
       - ./postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-clawstack}
+      POSTGRES_USER: ${POSTGRES_USER:-agentstack}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-clawstack}
+      POSTGRES_DB: ${POSTGRES_DB:-agentstack}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-clawstack}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentstack}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # ─── Redis ───────────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: redis
     restart: unless-stopped
-    networks: [clawnet]
+    networks: [agentstack_net]
     volumes:
       - ./.data/redis:/data
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
@@ -107,14 +163,13 @@ services:
       timeout: 5s
       retries: 5
 
-  # ─── Qdrant Vector DB ────────────────────────────────────────────
   qdrant:
     build:
       context: ./qdrant
       dockerfile: Dockerfile
     container_name: qdrant
     restart: unless-stopped
-    networks: [clawnet]
+    networks: [agentstack_net]
     volumes:
       - ./.data/qdrant:/qdrant/storage
     healthcheck:
@@ -123,16 +178,14 @@ services:
       timeout: 5s
       retries: 5
 
-  # ─── Nginx Reverse Proxy ─────────────────────────────────────────
   nginx:
     image: nginx:alpine
     container_name: nginx
     restart: unless-stopped
-    networks: [clawnet]
+    networks: [agentstack_net]
     ports:
       - "${NGINX_PORT:-80}:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     depends_on:
-      - openclaw
       - mission-control
