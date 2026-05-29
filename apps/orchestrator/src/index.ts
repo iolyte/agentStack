@@ -4,7 +4,7 @@ import { createClient } from 'redis'
 
 const PORT = Number.parseInt(process.env.ORCHESTRATOR_PORT?.trim() || '4200', 10)
 const REDIS_URL = process.env.REDIS_URL?.trim() || 'redis://redis:6379'
-const RUN_REQUESTS_STREAM = 'clawstack:run-requests'
+const RUN_REQUESTS_STREAM = 'agentstack:run-requests'
 
 const RunEventState = Annotation.Root({
   streamId: Annotation<string>(),

@@ -20,9 +20,9 @@ Open-source AI team control plane for software work.
 ```bash
 git clone https://github.com/iolyte/agentStack.git
 cd agentStack
-./scripts/clawstack install
+./scripts/agentstack install
 cp .env.example .env
-clawstack start
+agentstack start
 ```
 
 Open [http://localhost](http://localhost).

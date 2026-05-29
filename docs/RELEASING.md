@@ -20,8 +20,8 @@ git push origin v0.1.0-beta.1
 
 ## GitHub Actions publishes
 
-- `ghcr.io/iolyte/clawstack-mission-control:<version>`
-- `ghcr.io/iolyte/clawstack-control-plane:<version>`
-- `ghcr.io/iolyte/clawstack-orchestrator:<version>`
+- `ghcr.io/iolyte/agentstack-mission-control:<version>`
+- `ghcr.io/iolyte/agentstack-control-plane:<version>`
+- `ghcr.io/iolyte/agentstack-orchestrator:<version>`
 
 Desktop packaging is paused until the core architecture split is complete.

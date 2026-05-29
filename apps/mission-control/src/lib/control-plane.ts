@@ -2,14 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import type { AuthenticatedUser } from '@/lib/types'
 
 const CONTROL_PLANE_URL = process.env.CONTROL_PLANE_URL?.trim() || 'http://control-plane:4100'
-const INTERNAL_TOKEN = process.env.CLAWSTACK_INTERNAL_TOKEN?.trim()
+const INTERNAL_TOKEN = process.env.AGENTSTACK_INTERNAL_TOKEN?.trim()
+  || process.env.CLAWSTACK_INTERNAL_TOKEN?.trim()
   || process.env.MC_SESSION_SECRET?.trim()
-  || 'clawstack-internal'
+  || 'agentstack-internal'
 
 function buildHeaders(session: AuthenticatedUser, extra?: HeadersInit) {
   const headers = new Headers(extra)
-  headers.set('x-clawstack-internal-token', INTERNAL_TOKEN)
-  headers.set('x-clawstack-user', Buffer.from(JSON.stringify(session)).toString('base64url'))
+  headers.set('x-agentstack-internal-token', INTERNAL_TOKEN)
+  headers.set('x-agentstack-user', Buffer.from(JSON.stringify(session)).toString('base64url'))
   return headers
 }
 

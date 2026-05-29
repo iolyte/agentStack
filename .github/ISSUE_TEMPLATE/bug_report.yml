@@ -41,4 +41,4 @@ body:
     id: logs
     attributes:
       label: Logs or screenshots
-      description: Paste relevant output from `clawstack status`, container logs, or screenshots.
+      description: Paste relevant output from `agentstack status`, container logs, or screenshots.

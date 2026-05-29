@@ -3,17 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>clawstack Desktop</title>
+    <title>agentStack Desktop</title>
     <script type="module" src="/src/main.ts"></script>
   </head>
   <body>
     <div class="shell">
       <header class="hero">
         <div>
-          <p class="eyebrow">clawstack Desktop Beta</p>
+          <p class="eyebrow">agentStack Desktop Beta</p>
           <h1>Local launch control for your agent platform</h1>
           <p class="lede">
-            Run the local ClawStack stack, package a reusable runtime, and bring a Cloudflare-backed
+            Run the local agentStack stack, package a reusable runtime, and bring a Cloudflare-backed
             remote beta URL online without leaving the launcher.
           </p>
         </div>
@@ -47,7 +47,7 @@
             <button class="button button-secondary" data-action="openRuntimeDir" type="button">Open runtime folder</button>
           </div>
           <p class="hint">
-            Repo mode uses the checked-out <code>scripts/clawstack</code> helper. Runtime mode uses the packaged
+            Repo mode uses the checked-out <code>scripts/agentstack</code> helper. Runtime mode uses the packaged
             app-local bundle and the published Mission Control image line.
           </p>
         </section>
@@ -69,7 +69,7 @@
             </label>
             <label class="field">
               <span>Tunnel name</span>
-              <input id="tunnel-name" type="text" value="clawstack-beta" />
+              <input id="tunnel-name" type="text" value="agentstack-beta" />
             </label>
             <label class="field">
               <span>Public hostname</span>
@@ -93,7 +93,7 @@
           </div>
 
           <p class="hint">
-            ClawStack stores the Cloudflare account certificate and tunnel credentials inside a local stronghold vault.
+            agentStack stores the Cloudflare account certificate and tunnel credentials inside a local stronghold vault.
             The launcher only materializes temporary config files while the tunnel is running, then removes them again
             when you stop remote access.
           </p>

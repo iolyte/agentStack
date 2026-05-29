@@ -58,7 +58,7 @@ function buildSetupIssues(
       severity: service.status === 'down' ? 'critical' : 'warning',
       title: `${service.name} is ${service.status}`,
       details: service.details || 'The service did not respond to the latest health probe.',
-      action: 'Inspect `clawstack doctor` and the service logs for the failing container.',
+      action: 'Inspect `agentstack doctor` and the service logs for the failing container.',
     })
   }
 
@@ -84,7 +84,7 @@ function buildSetupIssues(
       severity: store.status === 'down' ? 'critical' : 'warning',
       title: `${store.label} persistence needs attention`,
       details: store.details,
-      action: 'Verify the bind mount exists under `.data` and re-run `clawstack doctor`.',
+      action: 'Verify the bind mount exists under `.data` and re-run `agentstack doctor`.',
     })
   }
 
@@ -122,7 +122,7 @@ function buildSetupIssues(
       severity: 'info',
       title: 'Stack is ready',
       details: 'Core services are healthy and the persistence roots are mounted.',
-      action: 'Use `clawstack doctor` whenever you want a deeper filesystem and datastore audit.',
+      action: 'Use `agentstack doctor` whenever you want a deeper filesystem and datastore audit.',
     })
   }
 

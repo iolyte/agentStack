@@ -16,8 +16,8 @@ declare global {
   var controlPlaneRedisConnectPromise: Promise<ReturnType<typeof createClient>> | undefined
 }
 
-export const WORKSPACE_EVENTS_STREAM = 'clawstack:workspace-events'
-export const RUN_REQUESTS_STREAM = 'clawstack:run-requests'
+export const WORKSPACE_EVENTS_STREAM = 'agentstack:workspace-events'
+export const RUN_REQUESTS_STREAM = 'agentstack:run-requests'
 
 function getRedisUrl() {
   return process.env.REDIS_URL?.trim() || 'redis://redis:6379'

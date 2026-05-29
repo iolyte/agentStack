@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "clawstack",
+  "productName": "agentStack",
   "version": "0.1.0-beta.1",
   "identifier": "com.iolyte.clawstack",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "clawstack Desktop",
+        "title": "agentStack Desktop",
         "width": 1120,
         "height": 820,
         "minWidth": 920,

@@ -2,7 +2,7 @@ import { Pool } from 'pg'
 
 declare global {
   // eslint-disable-next-line no-var
-  var clawstackPostgresPool: Pool | undefined
+  var agentstackPostgresPool: Pool | undefined
 }
 
 function getConnectionString() {
@@ -16,13 +16,13 @@ function getConnectionString() {
 }
 
 export function getPostgresPool() {
-  if (!global.clawstackPostgresPool) {
-    global.clawstackPostgresPool = new Pool({
+  if (!global.agentstackPostgresPool) {
+    global.agentstackPostgresPool = new Pool({
       connectionString: getConnectionString(),
       max: 10,
       idleTimeoutMillis: 10_000,
     })
   }
 
-  return global.clawstackPostgresPool
+  return global.agentstackPostgresPool
 }

@@ -32,7 +32,7 @@ function getSigningSecret() {
   return process.env.AUTH_JWT_SECRET?.trim()
     || process.env.MC_SESSION_SECRET?.trim()
     || getConfiguredPassword()
-    || 'clawstack'
+    || 'agentstack'
 }
 
 function safeEqual(left: string, right: string) {

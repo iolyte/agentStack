@@ -120,7 +120,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push mission-control image
         env:
-          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/clawstack-mission-control
+          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/agentstack-mission-control
           VERSION: ${{ needs.meta.outputs.version }}
           PRERELEASE: ${{ needs.meta.outputs.prerelease }}
         run: |
@@ -145,7 +145,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push control-plane image
         env:
-          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/clawstack-control-plane
+          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/agentstack-control-plane
           VERSION: ${{ needs.meta.outputs.version }}
           PRERELEASE: ${{ needs.meta.outputs.prerelease }}
         run: |
@@ -170,7 +170,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Build and push orchestrator image
         env:
-          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/clawstack-orchestrator
+          IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/agentstack-orchestrator
           VERSION: ${{ needs.meta.outputs.version }}
           PRERELEASE: ${{ needs.meta.outputs.prerelease }}
         run: |

@@ -55,5 +55,5 @@ flowchart LR
 ## Defaults
 
 - Default stack does **not** require `openclaw`
-- All containers share `clawnet`
+- All containers share `agentstack_net`
 - Only `nginx` is intended as the public entrypoint

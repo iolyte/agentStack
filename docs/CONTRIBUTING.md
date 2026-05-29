@@ -6,7 +6,7 @@
 git clone https://github.com/iolyte/agentStack.git
 cd agentStack
 cp .env.example .env
-./scripts/clawstack start
+./scripts/agentstack start
 ```
 
 ## App dev

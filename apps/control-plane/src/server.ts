@@ -28,9 +28,10 @@ import type {
 } from '@/lib/types'
 
 const PORT = Number.parseInt(process.env.PORT?.trim() || '4100', 10)
-const INTERNAL_TOKEN = process.env.CLAWSTACK_INTERNAL_TOKEN?.trim()
+const INTERNAL_TOKEN = process.env.AGENTSTACK_INTERNAL_TOKEN?.trim()
+  || process.env.CLAWSTACK_INTERNAL_TOKEN?.trim()
   || process.env.MC_SESSION_SECRET?.trim()
-  || 'clawstack-internal'
+  || 'agentstack-internal'
 
 function summarizeTasks(tasks: WorkspaceTask[]) {
   return tasks.reduce(
@@ -75,7 +76,7 @@ function sendJson(response: ServerResponse, status: number, body: unknown) {
 }
 
 function getInternalToken(request: IncomingMessage) {
-  const value = request.headers['x-clawstack-internal-token']
+  const value = request.headers['x-agentstack-internal-token'] ?? request.headers['x-clawstack-internal-token']
   return Array.isArray(value) ? value[0] : value
 }
 
@@ -84,7 +85,7 @@ function getSession(request: IncomingMessage): AuthenticatedUser | null {
     return null
   }
 
-  const rawHeader = request.headers['x-clawstack-user']
+  const rawHeader = request.headers['x-agentstack-user'] ?? request.headers['x-clawstack-user']
   const encoded = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader
 
   if (!encoded) {

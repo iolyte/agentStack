@@ -11,25 +11,25 @@ type RunRequestEvent = {
 
 declare global {
   // eslint-disable-next-line no-var
-  var clawstackRedisClient: RedisClientType | undefined
+  var agentstackRedisClient: RedisClientType | undefined
   // eslint-disable-next-line no-var
-  var clawstackRedisConnectPromise: Promise<RedisClientType> | undefined
+  var agentstackRedisConnectPromise: Promise<RedisClientType> | undefined
 }
 
-const WORKSPACE_EVENTS_STREAM = 'clawstack:workspace-events'
-const RUN_REQUESTS_STREAM = 'clawstack:run-requests'
+const WORKSPACE_EVENTS_STREAM = 'agentstack:workspace-events'
+const RUN_REQUESTS_STREAM = 'agentstack:run-requests'
 
 function getRedisUrl() {
   return process.env.REDIS_URL?.trim() || 'redis://redis:6379'
 }
 
 async function getRedisClient() {
-  if (global.clawstackRedisClient?.isOpen) {
-    return global.clawstackRedisClient
+  if (global.agentstackRedisClient?.isOpen) {
+    return global.agentstackRedisClient
   }
 
-  if (!global.clawstackRedisConnectPromise) {
-    global.clawstackRedisConnectPromise = (async () => {
+  if (!global.agentstackRedisConnectPromise) {
+    global.agentstackRedisConnectPromise = (async () => {
       const client = createClient({
         url: getRedisUrl(),
       })
@@ -39,12 +39,12 @@ async function getRedisClient() {
       })
 
       await client.connect()
-      global.clawstackRedisClient = client
+      global.agentstackRedisClient = client
       return client
     })()
   }
 
-  return global.clawstackRedisConnectPromise
+  return global.agentstackRedisConnectPromise
 }
 
 export async function publishWorkspaceEventEnvelope(event: WorkspaceEventEnvelope) {

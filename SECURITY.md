@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-Security fixes are applied to the latest published version of clawstack on the
+Security fixes are applied to the latest published version of agentStack on the
 `main` branch.
 
 ## Reporting a Vulnerability
@@ -10,7 +10,7 @@ Security fixes are applied to the latest published version of clawstack on the
 Please do not open public issues for security vulnerabilities.
 
 Use GitHub Security Advisories for private disclosure:
-[Report a vulnerability](https://github.com/iolyte/clawstack/security/advisories/new)
+[Report a vulnerability](https://github.com/iolyte/agentStack/security/advisories/new)
 
 When reporting, include:
 

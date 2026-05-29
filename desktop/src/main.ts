@@ -62,7 +62,7 @@ type VaultSession = {
   password: string
 }
 
-const VAULT_CLIENT = 'clawstack-remote-access'
+const VAULT_CLIENT = 'agentstack-remote-access'
 const CERT_KEY = 'cloudflare-cert-pem'
 const CREDENTIALS_KEY = 'cloudflare-credentials-json'
 
@@ -204,7 +204,7 @@ function stringFromBytes(value: number[] | Uint8Array | null | undefined) {
 }
 
 async function getVaultPath() {
-  return `${await appLocalDataDir()}clawstack-remote-access.hold`
+  return `${await appLocalDataDir()}agentstack-remote-access.hold`
 }
 
 async function unlockVault(force = false) {
@@ -366,7 +366,7 @@ createTunnelButton?.addEventListener('click', () => {
   void withButton(createTunnelButton, async () => {
     const certPem = await readSecret(CERT_KEY)
     if (!certPem) {
-      throw new Error('Connect Cloudflare first so ClawStack can save the account certificate in the vault.')
+      throw new Error('Connect Cloudflare first so agentStack can save the account certificate in the vault.')
     }
 
     const result = await invoke<CloudflareTunnelResult>('create_remote_tunnel', {

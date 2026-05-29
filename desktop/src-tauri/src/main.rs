@@ -1,3 +1,3 @@
 fn main() {
-    clawstack_desktop::run()
+    agentstack_desktop::run()
 }

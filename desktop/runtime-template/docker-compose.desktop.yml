@@ -1,13 +1,13 @@
 networks:
-  clawnet:
+  agentstack_net:
     driver: bridge
 
 services:
   openclaw:
     image: ghcr.io/openclaw/openclaw:latest
-    container_name: clawstack-openclaw
+    container_name: agentstack-openclaw
     restart: unless-stopped
-    networks: [clawnet]
+    networks: [agentstack_net]
     ports:
       - "${OPENCLAW_PORT:-18789}:18789"
     volumes:
@@ -29,10 +29,10 @@ services:
       start_period: 20s
 
   mission-control:
-    image: ${CLAWSTACK_MISSION_CONTROL_IMAGE}
-    container_name: clawstack-mission-control
+    image: ${AGENTSTACK_MISSION_CONTROL_IMAGE:-${CLAWSTACK_MISSION_CONTROL_IMAGE}}
+    container_name: agentstack-mission-control
     restart: unless-stopped
-    networks: [clawnet]
+    networks: [agentstack_net]
     ports:
       - "${MC_PORT:-4000}:4000"
     volumes:
@@ -55,7 +55,7 @@ services:
       QDRANT_URL: http://qdrant:6333
       NGINX_URL: http://nginx
       STACK_DATA_ROOT: /stack-data
-      MISSION_CONTROL_BUILD: clawstack-desktop-beta
+      MISSION_CONTROL_BUILD: agentstack-desktop-beta
     depends_on:
       openclaw:
         condition: service_healthy
@@ -68,26 +68,26 @@ services:
 
   postgres:
     image: postgres:16-alpine
-    container_name: clawstack-postgres
+    container_name: agentstack-postgres
     restart: unless-stopped
-    networks: [clawnet]
+    networks: [agentstack_net]
     volumes:
       - ./data/postgres:/var/lib/postgresql/data
     environment:
-      POSTGRES_USER: ${POSTGRES_USER:-clawstack}
+      POSTGRES_USER: ${POSTGRES_USER:-agentstack}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB:-clawstack}
+      POSTGRES_DB: ${POSTGRES_DB:-agentstack}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-clawstack}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agentstack}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
-    container_name: clawstack-redis
+    container_name: agentstack-redis
     restart: unless-stopped
-    networks: [clawnet]
+    networks: [agentstack_net]
     volumes:
       - ./data/redis:/data
     command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
@@ -99,9 +99,9 @@ services:
 
   qdrant:
     image: qdrant/qdrant:latest
-    container_name: clawstack-qdrant
+    container_name: agentstack-qdrant
     restart: unless-stopped
-    networks: [clawnet]
+    networks: [agentstack_net]
     volumes:
       - ./data/qdrant:/qdrant/storage
     healthcheck:
@@ -112,9 +112,9 @@ services:
 
   nginx:
     image: nginx:alpine
-    container_name: clawstack-nginx
+    container_name: agentstack-nginx
     restart: unless-stopped
-    networks: [clawnet]
+    networks: [agentstack_net]
     ports:
       - "${NGINX_PORT:-80}:80"
     volumes:

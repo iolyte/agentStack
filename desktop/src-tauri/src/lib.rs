@@ -127,7 +127,7 @@ fn detect_repo_root() -> Option<PathBuf> {
         .canonicalize()
         .ok()?;
 
-    if candidate.join("scripts/clawstack").exists() {
+    if candidate.join("scripts/agentstack").exists() || candidate.join("scripts/clawstack").exists() {
         Some(candidate)
     } else {
         None
@@ -234,7 +234,7 @@ fn ensure_runtime_bundle(app: &AppHandle) -> Result<PathBuf, String> {
     }
 
     let manifest = json!({
-        "productName": "clawstack",
+        "productName": "agentStack",
         "version": env!("CARGO_PKG_VERSION"),
         "preparedAt": unix_timestamp_string(),
         "mode": if detect_repo_root().is_some() { "repo" } else { "runtime" }
@@ -754,7 +754,7 @@ fn start_command_for(mode: LauncherMode) -> (&'static str, Vec<&'static str>, Pa
     match mode {
         LauncherMode::Repo => {
             let repo_root = detect_repo_root().expect("repo mode requires a repo root");
-            ("bash", vec!["scripts/clawstack", "start"], repo_root)
+            ("bash", vec!["scripts/agentstack", "start"], repo_root)
         }
         LauncherMode::Runtime => (
             "docker",
@@ -776,7 +776,7 @@ fn stop_command_for(mode: LauncherMode) -> (&'static str, Vec<&'static str>, Pat
     match mode {
         LauncherMode::Repo => {
             let repo_root = detect_repo_root().expect("repo mode requires a repo root");
-            ("bash", vec!["scripts/clawstack", "stop"], repo_root)
+            ("bash", vec!["scripts/agentstack", "stop"], repo_root)
         }
         LauncherMode::Runtime => (
             "docker",
@@ -942,7 +942,7 @@ fn launcher_status(app: AppHandle, state: State<LauncherState>) -> Result<Launch
     build_status(
         &app,
         &state,
-        "Desktop runtime prepared. Start the stack to boot local clawstack services, then configure remote access when you are ready.",
+        "Desktop runtime prepared. Start the stack to boot local agentStack services, then configure remote access when you are ready.",
     )
 }
 
@@ -1044,7 +1044,7 @@ fn create_remote_tunnel(
     )?;
     let combined_output = format_output(&create_result);
     let tunnel_id = extract_tunnel_uuid(&combined_output)
-        .ok_or_else(|| "Cloudflare created the tunnel, but clawstack could not parse its UUID from the CLI output.".to_string())?;
+        .ok_or_else(|| "Cloudflare created the tunnel, but agentStack could not parse its UUID from the CLI output.".to_string())?;
     let credentials_path = cloudflare_credentials_path(&runtime_root, &tunnel_id);
     let credentials_json = fs::read_to_string(&credentials_path)
         .map_err(|_| "Cloudflare created the tunnel, but the tunnel credentials file was not found.".to_string())?;
@@ -1170,7 +1170,7 @@ fn confirm_remote_access(
 
     metadata.access_confirmed = true;
     metadata.last_output = Some(
-        "Marked Cloudflare Access as configured. ClawStack will keep the tunnel running locally, and the public hostname should now be gated by your Access policy."
+        "Marked Cloudflare Access as configured. agentStack will keep the tunnel running locally, and the public hostname should now be gated by your Access policy."
             .to_string(),
     );
     save_remote_access_metadata(&runtime_root, &metadata)?;
@@ -1226,7 +1226,7 @@ pub fn run() {
             clear_remote_access
         ])
         .run(tauri::generate_context!())
-        .expect("error while running clawstack desktop");
+        .expect("error while running agentStack desktop");
 }
 
 #[cfg(test)]
@@ -1236,7 +1236,7 @@ mod tests {
 
     #[test]
     fn extracts_tunnel_uuid_from_cloudflare_output() {
-        let output = "Created tunnel clawstack-beta with id 12345678-90ab-cdef-1234-567890abcdef";
+        let output = "Created tunnel agentstack-beta with id 12345678-90ab-cdef-1234-567890abcdef";
         assert_eq!(
             extract_tunnel_uuid(output).as_deref(),
             Some("12345678-90ab-cdef-1234-567890abcdef")
