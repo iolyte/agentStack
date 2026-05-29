@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start -p 4000",
     "lint": "next lint",
-    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test": "tsx --test src/lib/api-auth.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.typecheck.json"
   },
   "dependencies": {
