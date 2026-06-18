@@ -821,92 +821,6 @@ function mergeLiveAgentState(agentRows: AgentRow[], liveAgents: Awaited<ReturnTy
   })
 }
 
-async function importLegacyMissionControlTasks(workspaceId: string, projectId: string) {
-  const pool = getPostgresPool()
-  const metadata = await pool.query<{ legacy_tasks_imported: boolean }>(
-    `
-      SELECT legacy_tasks_imported
-      FROM amp.metadata
-      WHERE singleton = TRUE
-    `,
-  )
-
-  if (metadata.rows[0]?.legacy_tasks_imported) {
-    return
-  }
-
-  const legacyTasks = await pool.query<{
-    title: string
-    description: string | null
-    status: TaskStatus
-    priority: TaskPriority
-    created_at: string
-    updated_at: string
-    completed_at: string | null
-  }>(
-    `
-      SELECT
-        title,
-        description,
-        status,
-        priority,
-        created_at,
-        updated_at,
-        completed_at
-      FROM mission_control.tasks
-      ORDER BY created_at ASC
-    `,
-  ).catch(() => ({ rows: [] as Array<{
-    title: string
-    description: string | null
-    status: TaskStatus
-    priority: TaskPriority
-    created_at: string
-    updated_at: string
-    completed_at: string | null
-  }> }))
-
-  for (const task of legacyTasks.rows) {
-    await pool.query(
-      `
-        INSERT INTO amp.tasks (
-          id,
-          workspace_id,
-          project_id,
-          title,
-          description,
-          status,
-          priority,
-          created_at,
-          updated_at,
-          completed_at
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      `,
-      [
-        randomUUID(),
-        workspaceId,
-        projectId,
-        task.title,
-        task.description,
-        normalizeTaskStatus(task.status),
-        normalizeTaskPriority(task.priority),
-        task.created_at,
-        task.updated_at,
-        task.completed_at,
-      ],
-    )
-  }
-
-  await pool.query(
-    `
-      UPDATE amp.metadata
-      SET legacy_tasks_imported = TRUE
-      WHERE singleton = TRUE
-    `,
-  )
-}
-
 async function recordWorkspaceEvent(input: {
   workspaceId: string
   type: string
@@ -1084,8 +998,7 @@ export async function ensureAmpSchema() {
         CREATE TABLE IF NOT EXISTS amp.metadata (
           singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
           schema_version TEXT NOT NULL,
-          last_booted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-          legacy_tasks_imported BOOLEAN NOT NULL DEFAULT FALSE
+          last_booted_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `)
       await pool.query(`
@@ -1250,10 +1163,41 @@ export async function ensureAmpSchema() {
         CREATE INDEX IF NOT EXISTS amp_workspace_events_workspace_id_idx
           ON amp.workspace_events (workspace_id, id DESC)
       `)
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS amp.preferences (
+          singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+          appearance_preference TEXT NOT NULL DEFAULT 'system',
+          density_preference TEXT NOT NULL DEFAULT 'comfortable',
+          show_completed_tasks BOOLEAN NOT NULL DEFAULT FALSE,
+          refresh_interval_seconds INTEGER NOT NULL DEFAULT 15,
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `)
+      await pool.query(`
+        INSERT INTO amp.preferences (singleton)
+        VALUES (TRUE)
+        ON CONFLICT (singleton) DO NOTHING
+      `)
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS amp.mc_tasks (
+          id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          description TEXT,
+          status TEXT NOT NULL DEFAULT 'backlog',
+          priority TEXT NOT NULL DEFAULT 'medium',
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          completed_at TIMESTAMPTZ
+        )
+      `)
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS amp_mc_tasks_updated_at_idx
+          ON amp.mc_tasks (updated_at DESC)
+      `)
       await pool.query(
         `
-          INSERT INTO amp.metadata (singleton, schema_version, last_booted_at, legacy_tasks_imported)
-          VALUES (TRUE, $1, NOW(), FALSE)
+          INSERT INTO amp.metadata (singleton, schema_version, last_booted_at)
+          VALUES (TRUE, $1, NOW())
           ON CONFLICT (singleton)
           DO UPDATE SET
             schema_version = EXCLUDED.schema_version,
@@ -1517,8 +1461,6 @@ export async function bootstrapWorkspaceForUser(session: AuthenticatedUser, inpu
       })
     })
   }
-
-  await importLegacyMissionControlTasks(workspaceId, projectId)
 
   const createdAgents = await listWorkspaceAgentRows(workspaceId)
   const coreAgentRow = createdAgents.find((agent: AgentRow) => agent.department === 'core')

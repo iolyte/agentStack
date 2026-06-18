@@ -4,6 +4,10 @@ import { getOpenClawConfigSummary } from '@/lib/openclaw-config'
 import { logger } from '@/lib/logger'
 import { listAgents, listSessions } from '@/lib/openclaw'
 import { subscribeToWorkspaceEvents } from '@/lib/workspace-events'
+import { getDashboardPreferences, updateDashboardPreferences } from '@/lib/preferences'
+import { createMcTask, listMcTasks, updateMcTask } from '@/lib/mc-tasks'
+import { getOverviewPayload } from '@/lib/dashboard'
+import { setGatewayAgentFile, getGatewayConfig, patchGatewayConfig } from '@/lib/gateway-client'
 import {
   bootstrapWorkspaceForUser,
   createWorkspaceAgentForUser,
@@ -21,7 +25,10 @@ import {
 } from '@/lib/workspace'
 import type {
   AuthenticatedUser,
+  AppearancePreference,
+  DashboardPreferences,
   Department,
+  DensityPreference,
   TaskPriority,
   TaskStatus,
   WorkspaceEventEnvelope,
@@ -124,6 +131,73 @@ function encodeSseChunk(input: { event: string; data: unknown; id?: number }) {
   lines.push(`data: ${JSON.stringify(input.data)}`)
 
   return `${lines.join('\n')}\n\n`
+}
+
+function isAppearancePreference(value: unknown): value is AppearancePreference {
+  return value === 'system' || value === 'light' || value === 'dark'
+}
+
+function isDensityPreference(value: unknown): value is DensityPreference {
+  return value === 'comfortable' || value === 'compact'
+}
+
+function normalizePreferenceInput(input: {
+  appearancePreference?: unknown
+  densityPreference?: unknown
+  showCompletedTasks?: unknown
+  refreshIntervalSeconds?: unknown
+}): Partial<DashboardPreferences> {
+  return {
+    ...(isAppearancePreference(input.appearancePreference)
+      ? { appearancePreference: input.appearancePreference }
+      : {}),
+    ...(isDensityPreference(input.densityPreference)
+      ? { densityPreference: input.densityPreference }
+      : {}),
+    ...(typeof input.showCompletedTasks === 'boolean'
+      ? { showCompletedTasks: input.showCompletedTasks }
+      : {}),
+    ...(typeof input.refreshIntervalSeconds === 'number'
+      ? { refreshIntervalSeconds: input.refreshIntervalSeconds }
+      : {}),
+  }
+}
+
+function buildGatewayConfigPatch(body: {
+  allowedOrigins?: unknown
+  raw?: unknown
+  baseHash?: unknown
+  note?: unknown
+}) {
+  if (typeof body.raw === 'string' && body.raw.trim()) {
+    return {
+      raw: body.raw,
+      baseHash: typeof body.baseHash === 'string' ? body.baseHash : undefined,
+      note: typeof body.note === 'string' ? body.note : undefined,
+    }
+  }
+
+  const allowedOrigins = Array.isArray(body.allowedOrigins)
+    ? body.allowedOrigins
+        .filter((origin): origin is string => typeof origin === 'string' && origin.trim() !== '')
+        .map((origin) => origin.trim())
+    : []
+
+  return {
+    raw: JSON.stringify(
+      {
+        gateway: {
+          controlUi: {
+            allowedOrigins,
+          },
+        },
+      },
+      null,
+      2,
+    ),
+    baseHash: typeof body.baseHash === 'string' ? body.baseHash : undefined,
+    note: typeof body.note === 'string' ? body.note : 'Update agentStack control UI allowed origins',
+  }
 }
 
 async function normalizeLocalSession(session: AuthenticatedUser) {
@@ -399,6 +473,131 @@ async function handleRequest(request: IncomingMessage, response: ServerResponse)
 
     if (url.pathname === '/events' && request.method === 'GET') {
       await handleEvents(request, response, session, url)
+      return
+    }
+
+    // --- Preferences ---
+
+    if (url.pathname === '/preferences' && request.method === 'GET') {
+      const preferences = await getDashboardPreferences()
+      sendJson(response, 200, { ok: true, preferences })
+      return
+    }
+
+    if (url.pathname === '/preferences' && request.method === 'PUT') {
+      const body = await readJson<{
+        appearancePreference?: string
+        densityPreference?: string
+        showCompletedTasks?: boolean
+        refreshIntervalSeconds?: number
+      }>(request)
+      const preferences = await updateDashboardPreferences(normalizePreferenceInput(body))
+      sendJson(response, 200, { ok: true, preferences })
+      return
+    }
+
+    // --- MC-level admin tasks ---
+
+    if (url.pathname === '/mc-tasks' && request.method === 'GET') {
+      const showCompleted = url.searchParams.get('showCompleted') === 'true'
+      const tasks = await listMcTasks(showCompleted)
+      sendJson(response, 200, { ok: true, tasks })
+      return
+    }
+
+    if (url.pathname === '/mc-tasks' && request.method === 'POST') {
+      const body = await readJson<{ title?: string; description?: string | null; priority?: string }>(request)
+
+      if (!body.title?.trim()) {
+        sendJson(response, 400, { ok: false, error: 'title is required' })
+        return
+      }
+
+      const task = await createMcTask({
+        title: body.title.trim(),
+        description: body.description,
+        priority: body.priority as TaskPriority | undefined,
+      })
+      sendJson(response, 200, { ok: true, task })
+      return
+    }
+
+    if (url.pathname === '/mc-tasks' && request.method === 'PATCH') {
+      const body = await readJson<{
+        id?: string
+        title?: string
+        description?: string | null
+        status?: string
+        priority?: string
+      }>(request)
+
+      if (!body.id?.trim()) {
+        sendJson(response, 400, { ok: false, error: 'id is required' })
+        return
+      }
+
+      const task = await updateMcTask({
+        id: body.id.trim(),
+        title: body.title,
+        description: body.description,
+        status: body.status as TaskStatus | undefined,
+        priority: body.priority as TaskPriority | undefined,
+      })
+      sendJson(response, 200, { ok: true, task })
+      return
+    }
+
+    // --- Dashboard aggregation ---
+
+    if (url.pathname === '/dashboard' && request.method === 'GET') {
+      const payload = await getOverviewPayload()
+      sendJson(response, 200, payload)
+      return
+    }
+
+    // --- Agent files (gateway proxy) ---
+
+    if (url.pathname === '/agent-files' && request.method === 'POST') {
+      const body = await readJson<{ agentId?: string; name?: string; content?: string }>(request)
+
+      if (!body.agentId?.trim() || !body.name?.trim()) {
+        sendJson(response, 400, { ok: false, error: 'agentId and name are required' })
+        return
+      }
+
+      const result = await setGatewayAgentFile(
+        body.agentId.trim(),
+        body.name.trim(),
+        body.content ?? '',
+      )
+      sendJson(response, 200, { ok: true, file: result.file ?? null })
+      return
+    }
+
+    // --- Gateway config proxy ---
+
+    if (url.pathname === '/config' && request.method === 'GET') {
+      const config = await getGatewayConfig().catch(() => ({ raw: undefined, hash: undefined }))
+      sendJson(response, 200, { ok: true, config: getOpenClawConfigSummary(), raw: config.raw, hash: config.hash })
+      return
+    }
+
+    if (url.pathname === '/config' && request.method === 'PUT') {
+      const body = await readJson<{
+        allowedOrigins?: unknown
+        raw?: unknown
+        baseHash?: unknown
+        note?: unknown
+      }>(request)
+      const patch = buildGatewayConfigPatch(body)
+
+      if (!patch.raw.trim()) {
+        sendJson(response, 400, { ok: false, error: 'raw config is required' })
+        return
+      }
+
+      await patchGatewayConfig(patch.raw, patch.baseHash, patch.note)
+      sendJson(response, 200, { ok: true, config: getOpenClawConfigSummary() })
       return
     }
 

@@ -1,4 +1,4 @@
-import { ensureMissionControlSchema, getPostgresPool } from '@/lib/postgres'
+import { getPostgresPool } from '@/lib/postgres'
 import type { AppearancePreference, DashboardPreferences, DensityPreference } from '@/lib/types'
 
 const DEFAULT_PREFERENCES: DashboardPreferences = {
@@ -31,7 +31,7 @@ function normalizeDensity(value: unknown): DensityPreference {
   return 'comfortable'
 }
 
-function normalizeRefreshInterval(value: unknown) {
+function normalizeRefreshInterval(value: unknown): number {
   if (value === 30 || value === 60) {
     return value
   }
@@ -52,12 +52,11 @@ function mapRow(row?: PreferenceRow | null): DashboardPreferences {
   }
 }
 
-export function getDefaultDashboardPreferences() {
+export function getDefaultDashboardPreferences(): DashboardPreferences {
   return DEFAULT_PREFERENCES
 }
 
-export async function getDashboardPreferences() {
-  await ensureMissionControlSchema()
+export async function getDashboardPreferences(): Promise<DashboardPreferences> {
   const pool = getPostgresPool()
   const result = await pool.query<PreferenceRow>(`
     SELECT
@@ -65,27 +64,34 @@ export async function getDashboardPreferences() {
       density_preference,
       show_completed_tasks,
       refresh_interval_seconds
-    FROM mission_control.preferences
+    FROM amp.preferences
     WHERE singleton = TRUE
   `)
 
   return mapRow(result.rows[0] ?? null)
 }
 
-export async function updateDashboardPreferences(nextPreferences: Partial<DashboardPreferences>) {
-  await ensureMissionControlSchema()
+export async function updateDashboardPreferences(
+  nextPreferences: Partial<DashboardPreferences>,
+): Promise<DashboardPreferences> {
   const current = await getDashboardPreferences()
   const merged: DashboardPreferences = {
-    appearancePreference: normalizeAppearance(nextPreferences.appearancePreference ?? current.appearancePreference),
-    densityPreference: normalizeDensity(nextPreferences.densityPreference ?? current.densityPreference),
+    appearancePreference: normalizeAppearance(
+      nextPreferences.appearancePreference ?? current.appearancePreference,
+    ),
+    densityPreference: normalizeDensity(
+      nextPreferences.densityPreference ?? current.densityPreference,
+    ),
     showCompletedTasks: nextPreferences.showCompletedTasks ?? current.showCompletedTasks,
-    refreshIntervalSeconds: normalizeRefreshInterval(nextPreferences.refreshIntervalSeconds ?? current.refreshIntervalSeconds),
+    refreshIntervalSeconds: normalizeRefreshInterval(
+      nextPreferences.refreshIntervalSeconds ?? current.refreshIntervalSeconds,
+    ),
   }
 
   const pool = getPostgresPool()
   await pool.query(
     `
-      INSERT INTO mission_control.preferences (
+      INSERT INTO amp.preferences (
         singleton,
         appearance_preference,
         density_preference,
@@ -98,7 +104,8 @@ export async function updateDashboardPreferences(nextPreferences: Partial<Dashbo
         appearance_preference = EXCLUDED.appearance_preference,
         density_preference = EXCLUDED.density_preference,
         show_completed_tasks = EXCLUDED.show_completed_tasks,
-        refresh_interval_seconds = EXCLUDED.refresh_interval_seconds
+        refresh_interval_seconds = EXCLUDED.refresh_interval_seconds,
+        updated_at = NOW()
     `,
     [
       merged.appearancePreference,

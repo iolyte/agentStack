@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireApiAuth } from '@/lib/api-auth'
+import { getAuthenticatedSession, requireApiAuth } from '@/lib/api-auth'
+import { proxyControlPlaneJson } from '@/lib/control-plane'
 import { logger } from '@/lib/logger'
-import { getDashboardPreferences, updateDashboardPreferences } from '@/lib/preferences'
-import type { AppearancePreference, DensityPreference } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,12 +12,27 @@ export async function GET(request: NextRequest) {
     return unauthorized
   }
 
-  const preferences = await getDashboardPreferences()
+  const session = getAuthenticatedSession(request)
 
-  return NextResponse.json({
-    ok: true,
-    preferences,
-  })
+  if (!session) {
+    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  }
+
+  try {
+    return proxyControlPlaneJson(request, session, '/preferences')
+  } catch (error) {
+    logger.warn('Settings fetch failed', {
+      error: error instanceof Error ? error.message : String(error),
+    })
+
+    return NextResponse.json(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : 'Unable to load settings',
+      },
+      { status: 400 },
+    )
+  }
 }
 
 export async function PUT(request: NextRequest) {
@@ -28,21 +42,16 @@ export async function PUT(request: NextRequest) {
     return unauthorized
   }
 
-  try {
-    const body = (await request.json()) as {
-      appearancePreference?: AppearancePreference
-      densityPreference?: DensityPreference
-      showCompletedTasks?: boolean
-      refreshIntervalSeconds?: number
-    }
-    const preferences = await updateDashboardPreferences(body)
+  const session = getAuthenticatedSession(request)
 
-    return NextResponse.json({
-      ok: true,
-      preferences,
-    })
+  if (!session) {
+    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  }
+
+  try {
+    return proxyControlPlaneJson(request, session, '/preferences')
   } catch (error) {
-    logger.warn('Mission Control settings update failed', {
+    logger.warn('Settings update failed', {
       error: error instanceof Error ? error.message : String(error),
     })
 

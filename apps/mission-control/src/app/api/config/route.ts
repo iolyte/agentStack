@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireApiAuth } from '@/lib/api-auth'
-import { getGatewayConfig, patchGatewayConfig } from '@/lib/gateway-client'
+import { getAuthenticatedSession, requireApiAuth } from '@/lib/api-auth'
+import { proxyControlPlaneJson } from '@/lib/control-plane'
 import { logger } from '@/lib/logger'
-import { getOpenClawConfigSummary } from '@/lib/openclaw-config'
 
 export const dynamic = 'force-dynamic'
 
@@ -13,10 +12,13 @@ export async function GET(request: NextRequest) {
     return unauthorized
   }
 
-  return NextResponse.json({
-    ok: true,
-    config: getOpenClawConfigSummary(),
-  })
+  const session = getAuthenticatedSession(request)
+
+  if (!session) {
+    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  }
+
+  return proxyControlPlaneJson(request, session, '/config')
 }
 
 export async function PUT(request: NextRequest) {
@@ -26,37 +28,16 @@ export async function PUT(request: NextRequest) {
     return unauthorized
   }
 
+  const session = getAuthenticatedSession(request)
+
+  if (!session) {
+    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  }
+
   try {
-    const body = (await request.json()) as {
-      allowedOrigins?: string[]
-    }
-    const allowedOrigins = Array.isArray(body.allowedOrigins)
-      ? body.allowedOrigins.filter((origin) => typeof origin === 'string' && origin.trim() !== '').map((origin) => origin.trim())
-      : []
-    const current = await getGatewayConfig().catch(() => ({ hash: undefined as string | undefined }))
-
-    await patchGatewayConfig(
-      JSON.stringify(
-        {
-          gateway: {
-            controlUi: {
-              allowedOrigins,
-            },
-          },
-        },
-        null,
-        2,
-      ),
-      current.hash,
-      'Update agentStack control UI allowed origins',
-    )
-
-    return NextResponse.json({
-      ok: true,
-      config: getOpenClawConfigSummary(),
-    })
+    return proxyControlPlaneJson(request, session, '/config')
   } catch (error) {
-    logger.warn('Mission Control config update failed', {
+    logger.warn('Config update failed', {
       error: error instanceof Error ? error.message : String(error),
     })
 

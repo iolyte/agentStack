@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { ensureMissionControlSchema, type MissionControlMetadata } from '@/lib/postgres'
+import { getPostgresPool } from '@/lib/postgres'
 import { getQdrantCollections, getRedisMemoryInfo } from '@/lib/telemetry'
 import type {
   PersistenceStatus,
@@ -86,8 +86,59 @@ function describeFreshness(populated: boolean, emptyMessage: string, readyMessag
   return populated ? readyMessage : emptyMessage
 }
 
-function makeMissionControlStatus(directory: DirectorySnapshot, metadata: MissionControlMetadata | null, error: string | null): PersistenceStatus {
-  const status: StoreStatus = metadata
+/**
+ * Check if the control-plane `amp` schema is reachable.
+ * MC no longer owns any schema; this is purely an ops health check.
+ */
+async function checkControlPlaneSchema(): Promise<{
+  healthy: boolean
+  schemaVersion: string | null
+  lastBootedAt: string | null
+  error: string | null
+}> {
+  try {
+    const pool = getPostgresPool()
+    const result = await pool.query<{
+      schema_version: string
+      last_booted_at: string
+    }>(`
+      SELECT schema_version, last_booted_at
+      FROM amp.metadata
+      WHERE singleton = TRUE
+    `)
+
+    const row = result.rows[0]
+
+    if (!row) {
+      return { healthy: false, schemaVersion: null, lastBootedAt: null, error: 'amp.metadata row not found' }
+    }
+
+    return {
+      healthy: true,
+      schemaVersion: row.schema_version,
+      lastBootedAt: row.last_booted_at,
+      error: null,
+    }
+  } catch (error) {
+    return {
+      healthy: false,
+      schemaVersion: null,
+      lastBootedAt: null,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+function makeControlPlaneSchemaStatus(
+  directory: DirectorySnapshot,
+  schemaInfo: {
+    healthy: boolean
+    schemaVersion: string | null
+    lastBootedAt: string | null
+    error: string | null
+  },
+): PersistenceStatus {
+  const status: StoreStatus = schemaInfo.healthy
     ? directory.exists
       ? 'healthy'
       : 'warning'
@@ -95,17 +146,17 @@ function makeMissionControlStatus(directory: DirectorySnapshot, metadata: Missio
 
   return {
     id: 'missionControl',
-    label: 'Mission Control',
+    label: 'Control Plane DB',
     status,
     path: hostPath('postgres'),
     mounted: directory.exists,
-    populated: Boolean(metadata),
-    details: metadata
-      ? `Schema mission_control is bootstrapped in PostgreSQL. Last boot ${new Date(metadata.lastBootedAt).toLocaleString()}.`
-      : error || 'Mission Control schema is not available yet.',
+    populated: schemaInfo.healthy,
+    details: schemaInfo.healthy
+      ? `Schema amp is bootstrapped in PostgreSQL. Last boot ${new Date(schemaInfo.lastBootedAt!).toLocaleString()}.`
+      : schemaInfo.error || 'Control plane schema (amp) is not reachable.',
     fileCount: directory.fileCount,
-    schemaVersion: metadata?.schemaVersion,
-    lastBootedAt: metadata?.lastBootedAt,
+    schemaVersion: schemaInfo.schemaVersion ?? undefined,
+    lastBootedAt: schemaInfo.lastBootedAt ?? undefined,
   }
 }
 
@@ -201,22 +252,14 @@ export async function inspectPersistence(services: ServiceHealth[]) {
   const qdrantDirectory = inspectDirectory(containerPath('qdrant'))
   const openclawDirectory = inspectDirectory(containerPath('openclaw', 'config'))
 
-  let metadata: MissionControlMetadata | null = null
-  let missionControlError: string | null = null
-
-  try {
-    metadata = await ensureMissionControlSchema()
-  } catch (error) {
-    missionControlError = error instanceof Error ? error.message : String(error)
-  }
-
-  const [redis, qdrantCollections] = await Promise.all([
+  const [schemaInfo, redis, qdrantCollections] = await Promise.all([
+    checkControlPlaneSchema(),
     process.env.REDIS_URL ? getRedisMemoryInfo(process.env.REDIS_URL) : Promise.resolve(null),
     process.env.QDRANT_URL ? getQdrantCollections(process.env.QDRANT_URL) : Promise.resolve([]),
   ])
 
   return [
-    makeMissionControlStatus(postgresDirectory, metadata, missionControlError),
+    makeControlPlaneSchemaStatus(postgresDirectory, schemaInfo),
     makePostgresStatus(postgresDirectory, services),
     makeRedisStatus(redisDirectory, services, redis),
     makeQdrantStatus(qdrantDirectory, services, qdrantCollections),
