@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { ensureMissionControlSchema, getPostgresPool } from '@/lib/postgres'
+import { getPostgresPool } from '@/lib/postgres'
 import type { MissionControlTask, TaskPriority, TaskStatus, TaskSummary } from '@/lib/types'
 
-type TaskRow = {
+type McTaskRow = {
   id: string
   title: string
   description: string | null
@@ -13,7 +13,7 @@ type TaskRow = {
   completed_at: string | null
 }
 
-function mapTask(row: TaskRow): MissionControlTask {
+function mapTask(row: McTaskRow): MissionControlTask {
   return {
     id: row.id,
     title: row.title,
@@ -42,43 +42,7 @@ function normalizePriority(value: unknown): TaskPriority {
   return 'medium'
 }
 
-export async function listMissionControlTasks(showCompleted: boolean) {
-  await ensureMissionControlSchema()
-  const pool = getPostgresPool()
-  const result = await pool.query<TaskRow>(
-    `
-      SELECT
-        id,
-        title,
-        description,
-        status,
-        priority,
-        created_at,
-        updated_at,
-        completed_at
-      FROM mission_control.tasks
-      WHERE $1::boolean = TRUE OR status <> 'done'
-      ORDER BY
-        CASE priority
-          WHEN 'high' THEN 0
-          WHEN 'medium' THEN 1
-          ELSE 2
-        END,
-        CASE status
-          WHEN 'in_progress' THEN 0
-          WHEN 'blocked' THEN 1
-          WHEN 'backlog' THEN 2
-          ELSE 3
-        END,
-        updated_at DESC
-    `,
-    [showCompleted],
-  )
-
-  return result.rows.map(mapTask)
-}
-
-export function summarizeTasks(tasks: MissionControlTask[]): TaskSummary {
+export function summarizeMcTasks(tasks: MissionControlTask[]): TaskSummary {
   return tasks.reduce<TaskSummary>(
     (summary, task) => {
       summary.total += 1
@@ -114,12 +78,46 @@ export function summarizeTasks(tasks: MissionControlTask[]): TaskSummary {
   )
 }
 
-export async function createMissionControlTask(input: {
+export async function listMcTasks(showCompleted: boolean): Promise<MissionControlTask[]> {
+  const pool = getPostgresPool()
+  const result = await pool.query<McTaskRow>(
+    `
+      SELECT
+        id,
+        title,
+        description,
+        status,
+        priority,
+        created_at,
+        updated_at,
+        completed_at
+      FROM amp.mc_tasks
+      WHERE $1::boolean = TRUE OR status <> 'done'
+      ORDER BY
+        CASE priority
+          WHEN 'high' THEN 0
+          WHEN 'medium' THEN 1
+          ELSE 2
+        END,
+        CASE status
+          WHEN 'in_progress' THEN 0
+          WHEN 'blocked' THEN 1
+          WHEN 'backlog' THEN 2
+          ELSE 3
+        END,
+        updated_at DESC
+    `,
+    [showCompleted],
+  )
+
+  return result.rows.map(mapTask)
+}
+
+export async function createMcTask(input: {
   title: string
   description?: string | null
   priority?: TaskPriority
-}) {
-  await ensureMissionControlSchema()
+}): Promise<MissionControlTask> {
   const pool = getPostgresPool()
   const title = input.title.trim()
 
@@ -127,9 +125,9 @@ export async function createMissionControlTask(input: {
     throw new Error('Task title is required')
   }
 
-  const result = await pool.query<TaskRow>(
+  const result = await pool.query<McTaskRow>(
     `
-      INSERT INTO mission_control.tasks (
+      INSERT INTO amp.mc_tasks (
         id,
         title,
         description,
@@ -155,19 +153,24 @@ export async function createMissionControlTask(input: {
     ],
   )
 
-  return mapTask(result.rows[0])
+  const row = result.rows[0]
+
+  if (!row) {
+    throw new Error('Task was not created')
+  }
+
+  return mapTask(row)
 }
 
-export async function updateMissionControlTask(input: {
+export async function updateMcTask(input: {
   id: string
   title?: string
   description?: string | null
   status?: TaskStatus
   priority?: TaskPriority
-}) {
-  await ensureMissionControlSchema()
+}): Promise<MissionControlTask> {
   const pool = getPostgresPool()
-  const currentResult = await pool.query<TaskRow>(
+  const currentResult = await pool.query<McTaskRow>(
     `
       SELECT
         id,
@@ -178,7 +181,7 @@ export async function updateMissionControlTask(input: {
         created_at,
         updated_at,
         completed_at
-      FROM mission_control.tasks
+      FROM amp.mc_tasks
       WHERE id = $1
     `,
     [input.id],
@@ -197,9 +200,9 @@ export async function updateMissionControlTask(input: {
   }
 
   const status = input.status === undefined ? current.status : normalizeStatus(input.status)
-  const result = await pool.query<TaskRow>(
+  const result = await pool.query<McTaskRow>(
     `
-      UPDATE mission_control.tasks
+      UPDATE amp.mc_tasks
       SET
         title = $2,
         description = $3,
@@ -224,11 +227,21 @@ export async function updateMissionControlTask(input: {
     [
       input.id,
       title,
-      input.description === undefined ? current.description : input.description?.trim() || null,
+      input.description === undefined
+        ? current.description
+        : input.description?.trim() || null,
       status,
-      input.priority === undefined ? current.priority : normalizePriority(input.priority),
+      input.priority === undefined
+        ? current.priority
+        : normalizePriority(input.priority),
     ],
   )
 
-  return mapTask(result.rows[0])
+  const updated = result.rows[0]
+
+  if (!updated) {
+    throw new Error('Task not found after update')
+  }
+
+  return mapTask(updated)
 }

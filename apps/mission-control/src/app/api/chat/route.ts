@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getAuthenticatedSession, requireApiAuth } from '@/lib/api-auth'
 import { listPersistedChatSessions } from '@/lib/agent-workspace'
-import { proxyControlPlaneJson } from '@/lib/control-plane'
+import { getControlPlaneJson, proxyControlPlaneJson } from '@/lib/control-plane'
 import { logger } from '@/lib/logger'
-import { listSessions } from '@/lib/openclaw'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,14 +13,23 @@ export async function GET(request: NextRequest) {
     return unauthorized
   }
 
-  const [liveSessions, persistedSessions] = await Promise.all([
-    listSessions(),
+  const session = getAuthenticatedSession(request)
+
+  if (!session) {
+    return NextResponse.json({ ok: false, error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const [chatPayload, persistedSessions] = await Promise.all([
+    getControlPlaneJson<{ ok: true; liveSessions: unknown[] }>('/chat', session).catch(() => ({
+      ok: true as const,
+      liveSessions: [],
+    })),
     Promise.resolve(listPersistedChatSessions()),
   ])
 
   return NextResponse.json({
     ok: true,
-    liveSessions,
+    liveSessions: chatPayload.liveSessions,
     persistedSessions,
   })
 }

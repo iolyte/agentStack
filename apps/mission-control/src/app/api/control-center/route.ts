@@ -1,7 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { requireApiAuth } from '@/lib/api-auth'
-import { getOverviewPayload } from '@/lib/dashboard'
-import { logger } from '@/lib/logger'
+import { NextRequest } from 'next/server'
+import { getAuthenticatedSession, requireApiAuth } from '@/lib/api-auth'
+import { proxyControlPlaneJson } from '@/lib/control-plane'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,25 +11,14 @@ export async function GET(request: NextRequest) {
     return unauthorized
   }
 
-  try {
-    const payload = await getOverviewPayload()
+  const session = getAuthenticatedSession(request)
 
-    return NextResponse.json(payload, {
-      headers: {
-        'Cache-Control': 'no-store',
-      },
+  if (!session) {
+    return new Response(JSON.stringify({ ok: false, error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
     })
-  } catch (error) {
-    logger.error('Control center payload request failed', {
-      error: error instanceof Error ? error.message : String(error),
-    })
-
-    return NextResponse.json(
-      {
-        ok: false,
-        error: 'Unable to load control center data',
-      },
-      { status: 500 },
-    )
   }
+
+  return proxyControlPlaneJson(request, session, '/dashboard')
 }
