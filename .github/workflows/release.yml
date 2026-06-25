@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: meta
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
       - uses: actions/setup-node@v4
@@ -108,7 +108,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [meta, validate]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
       - uses: docker/setup-qemu-action@v3
@@ -133,7 +133,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [meta, validate]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
       - uses: docker/setup-qemu-action@v3
@@ -158,7 +158,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [meta, validate]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.meta.outputs.tag }}
       - uses: docker/setup-qemu-action@v3
