@@ -15,7 +15,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
-    "@types/node": "^20",
+    "@types/node": "^26",
     "@types/pg": "^8.11.10",
     "@types/ws": "^8",
     "tsx": "^4.21.0",
